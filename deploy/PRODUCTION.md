@@ -4,7 +4,7 @@ Canonical domain: `https://open-box.space`
 
 ## Topology
 
-`open-box.space -> Cloudflare Worker (open-box-gateway) -> Zeabur Open-Box/OpenList -> Master Storage`
+`open-box.space -> Cloudflare Worker (open-box-gateway) -> Zeabur Open-Box/OpenList -> Supabase Postgres + Master Storage`
 
 Source collection remains independent:
 
@@ -16,53 +16,47 @@ Source files are never automatically moved or deleted. Source deletion must not 
 
 - GitHub: source, CI/CD and reviewed production changes.
 - Cloudflare: DNS/TLS/front-door Worker gateway for `open-box.space`.
-- Zeabur: persistent Open-Box/OpenList application runtime (volume at `/opt/openlist/data`).
-- Supabase: optional PostgreSQL / Auth (current production runtime uses volume-backed config).
-- Master Storage: canonical collected file repository, independent from the OpenList application server.
+- Zeabur: Open-Box/OpenList application runtime (volume at `/opt/openlist/data` for local files/cache).
+- Supabase: PostgreSQL (OpenList `x_*` tables + Open-Box `openbox_*` tables), Auth, Storage buckets.
+- Master Storage: canonical collected file repository, independent from the application container filesystem.
 - rclone worker: one-way collection from external storage into Master Storage.
 
-## Required runtime variables
+## Required runtime variables (Zeabur)
 
-Open-Box application (Zeabur):
+OpenList maps env with prefix `DB_` using tags `TYPE/HOST/PORT/USER/PASS/NAME/SSL_MODE` (not `DB_PASSWORD`).
 
 - `PORT=5244`
 - `SITE_URL=https://open-box.space`
 - `PUBLIC_DOMAIN=open-box.space`
 - `TZ=Asia/Manila`
 - `UMASK=022`
-
-Optional Postgres (when enabled):
-
 - `DB_TYPE=postgres`
-- `DB_HOST`
+- `DB_HOST=aws-0-ap-northeast-1.pooler.supabase.com`
 - `DB_PORT=5432`
-- `DB_USER`
-- `DB_PASSWORD` (secret)
+- `DB_USER=postgres.ymhiwerqyegvondndkjn`
+- `DB_PASS` (secret)
 - `DB_NAME=postgres`
 - `DB_SSL_MODE=require`
+- `DB_TABLE_PREFIX=x_`
 
-Cloudflare gateway (Worker bindings):
+Cloudflare Worker bindings:
 
 - `APP_NAME=Open-Box`
 - `ORIGIN_URL=https://open-box-space.zeabur.app`
-- `SUPABASE_URL`
+- `SUPABASE_URL=https://ymhiwerqyegvondndkjn.supabase.co`
 - `SUPABASE_PUBLISHABLE_KEY` (secret)
 - `AUTH_REQUIRED=false` until login flow is verified end-to-end
 
-Storage collector:
-
-- `MASTER_REMOTE=master`
-- `MASTER_ROOT=open-box`
-- populated `rclone.conf` mounted from runtime secrets/persistent storage; never committed
-
 ## Persistence
 
-`/opt/openlist/data` must remain on a persistent Zeabur volume. Master Storage must be separate from this volume so loss/replacement of the application runtime does not destroy collected files.
+- OpenList metadata: Supabase Postgres (`x_*`).
+- Local runtime files: Zeabur volume `/opt/openlist/data`.
+- Object files: Supabase Storage buckets `open-box-files`, `open-box-backups` and/or external Master Storage.
 
 ## DNS
 
-Production apex `open-box.space` is a proxied CNAME to the Zeabur origin, with Cloudflare Worker route `open-box.space/*` as the active front door. Do not expose the Master Storage backend publicly unless a specific storage protocol requires it.
+Production apex `open-box.space` is a proxied CNAME to `open-box-space.zeabur.app`, with Worker route `open-box.space/*` as the active front door.
 
 ## Deployment gate
 
-Before production promotion verify: application health, persistent volume, optional PostgreSQL connectivity, source mounts, non-destructive copy behavior, Master Storage write/read, OpenList Master Storage mount, domain/TLS, restart recovery, and restore procedure.
+Verify: application health, Postgres connectivity, persistent volume, OpenList login, storages, domain/TLS, restart recovery.
