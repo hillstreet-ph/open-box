@@ -6,11 +6,11 @@ compatibility_date = "2026-08-28"
 APP_NAME = "Open-Box"
 ORIGIN_URL = "https://open-box-space.zeabur.app"
 SUPABASE_URL = "https://ymhiwerqyegvondndkjn.supabase.co"
-AUTH_REQUIRED = "true"
+AUTH_REQUIRED = "false"
 
 # Workers AI binding
 [ai]
 binding = "AI"
 
 # Set SUPABASE_PUBLISHABLE_KEY with `wrangler secret put`.
-# GitHub OAuth is enforced in production; /ping remains publicly accessible for health checks.
+# Enable only after the GitHub provider can read the authenticated user's email and the full callback test passes.
