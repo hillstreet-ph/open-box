@@ -23,7 +23,7 @@ Source files are never automatically moved or deleted. Source deletion must not 
 
 ## Required runtime variables (Zeabur)
 
-OpenList maps env with prefix `DB_` using tags `TYPE/HOST/PORT/USER/PASS/NAME/SSL_MODE` (not `DB_PASSWORD`).
+OpenList maps env with prefix `DB_` using tags `TYPE/HOST/PORT/USER/PASS/NAME/SSL_MODE` (not `DB_PASS`).
 
 - `PORT=5244`
 - `SITE_URL=https://open-box.space`
