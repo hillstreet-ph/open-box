@@ -17,7 +17,7 @@ spec:
       type: STRING
       name: Supabase database user
       description: Session-pooler database username.
-    - key: DB_PASSWORD
+    - key: DB_PASS
       type: STRING
       name: Supabase database password
       description: Enter this only in Zeabur; never commit it.
@@ -61,8 +61,8 @@ spec:
             default: "5432"
           DB_USER:
             default: ${DB_USER}
-          DB_PASSWORD:
-            default: ${DB_PASSWORD}
+          DB_PASS:
+            default: ${DB_PASS}
           DB_NAME:
             default: postgres
           DB_SSL_MODE:
