@@ -8,5 +8,9 @@ ORIGIN_URL = "https://open-box-space.zeabur.app"
 SUPABASE_URL = "https://ymhiwerqyegvondndkjn.supabase.co"
 AUTH_REQUIRED = "false"
 
+# Workers AI binding
+[ai]
+binding = "AI"
+
 # Set SUPABASE_PUBLISHABLE_KEY with `wrangler secret put`.
 # Set AUTH_REQUIRED=true only after /auth/login succeeds on the production domain.
