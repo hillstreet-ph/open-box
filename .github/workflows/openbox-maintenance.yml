@@ -10,10 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Production smoke
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
         run: |
           set -euo pipefail
-          URL="${{ secrets.SITE_URL }}"
-          if [ -z "$URL" ]; then URL="https://openlist-railway-production-2100.up.railway.app"; fi
+          URL="${SITE_URL%/}"
           code=$(curl -sS -o /tmp/p -w "%{http_code}" "$URL/ping" || true)
           body=$(cat /tmp/p || true)
           echo "ping=$code body=$body"
@@ -22,9 +23,9 @@ jobs:
 
       - name: Settings check
         env:
-          SITE_URL: ${{ secrets.SITE_URL }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
         run: |
-          URL="${SITE_URL:-https://openlist-railway-production-2100.up.railway.app}"
+          URL="${SITE_URL%/}"
           curl -sS "$URL/api/public/settings" | tee /tmp/settings.json
           python3 - <<'PY'
           import json

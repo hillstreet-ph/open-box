@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOCKERHUB_ORG_NAME: ${{ vars.DOCKERHUB_ORG_NAME || 'openlistteam' }}
-  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || 'openlistteam' }}
-  IMAGE_NAME: openlist-git
-  IMAGE_NAME_DOCKERHUB: openlist
+  DOCKERHUB_ORG_NAME: ${{ vars.DOCKERHUB_ORG_NAME || 'openclose8' }}
+  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || 'hillstreet-ph' }}
+  IMAGE_NAME: open-box
+  IMAGE_NAME_DOCKERHUB: open-box
   REGISTRY: ghcr.io
   ARTIFACT_NAME: 'binaries_docker_release'
   RELEASE_PLATFORMS: 'linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/arm/v6,linux/ppc64le,linux/riscv64,linux/loong64' ### Temporarily disable Docker builds for linux/s390x architectures for unknown reasons.
