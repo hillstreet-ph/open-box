@@ -14,8 +14,7 @@ revoke all on table
 from anon, authenticated;
 
 -- Authenticated REST clients receive only the operations protected by the
--- existing per-user RLS policies. In particular, do not grant TRUNCATE,
--- REFERENCES, or TRIGGER.
+-- existing per-user RLS policies. Do not grant schema-management privileges.
 grant select, update on table public.openbox_profiles to authenticated;
 grant select, insert, update, delete on table public.openbox_integrations to authenticated;
 grant select, insert, update, delete on table public.openbox_files to authenticated;
