@@ -10,7 +10,8 @@ Source collection remains independent:
 
 `Google Drive / Dropbox / OneDrive -> read+copy collector -> Master Storage`
 
-Account onboarding is available at `/connect-storage`. It is safe to deploy
+Integration settings are available at `/settings/integrations`, with the legacy
+`/connect-storage` path serving the same view. It is safe to deploy
 before provider authorization because it contains no credentials and creates no
 placeholder mounts. Provider accounts are connected later through the
 authenticated storage manager; Box uses the rclone collector.
