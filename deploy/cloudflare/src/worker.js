@@ -78,8 +78,58 @@ export function storageProviderManifest() {
   };
 }
 
-function storageConnectionsPage(appName) {
+async function probe(url, init = {}) {
+  try {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(5000) });
+    return { ok: response.ok, status: response.status, response };
+  } catch (error) {
+    return { ok: false, status: 0, error: String(error?.message || error) };
+  }
+}
+
+export async function integrationStatus(env) {
+  const [origin, settings, supabase] = await Promise.all([
+    probe(`${env.ORIGIN_URL}/ping`),
+    probe(`${env.ORIGIN_URL}/api/public/settings`),
+    probe(`${env.SUPABASE_URL}/auth/v1/health`, {
+      headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY },
+    }),
+  ]);
+  let openList = { title: "Open-Box", githubSso: false };
+  if (settings.ok) {
+    const payload = await settings.response.json().catch(() => ({}));
+    openList = {
+      title: payload?.data?.site_title || "Open-Box",
+      githubSso: payload?.data?.sso_login_enabled === "true" && payload?.data?.sso_login_platform === "Github",
+    };
+  }
+  const services = [
+    { id: "cloudflare", name: "Cloudflare Gateway", state: "operational", detail: "Edge, TLS, routing, and settings UI" },
+    { id: "zeabur", name: "Zeabur Runtime", state: origin.ok ? "operational" : "degraded", detail: "OpenList application origin" },
+    { id: "supabase", name: "Supabase", state: supabase.ok ? "operational" : "degraded", detail: "Postgres, Auth, Storage, and backups" },
+    { id: "github", name: "GitHub SSO", state: openList.githubSso ? "operational" : "action_required", detail: "Administrator authentication" },
+    { id: "workers-ai", name: "Workers AI", state: env.AI ? "operational" : "action_required", detail: "Edge AI chat and embeddings" },
+    { id: "docker", name: "Docker Delivery", state: "configured", detail: "GitHub Actions image build and release" },
+  ];
+  return {
+    status: services.some(({ state }) => state === "degraded") ? "degraded" : "operational",
+    checkedAt: new Date().toISOString(),
+    application: openList,
+    services,
+    storage: storageProviderManifest(),
+  };
+}
+
+function statusBadge(state) {
+  const label = state === "operational" ? "Operational" : state === "configured" ? "Configured" : state === "degraded" ? "Degraded" : "Action required";
+  return `<span class="badge ${state}">${label}</span>`;
+}
+
+function integrationSettingsPage(appName, status) {
   const escapedName = String(appName || "Open-Box").replace(/[<>&"']/g, "");
+  const services = status.services.map((service) => `<article class="service">
+    <div><h3>${service.name}</h3><p>${service.detail}</p></div>${statusBadge(service.state)}
+  </article>`).join("");
   const cards = STORAGE_PROVIDERS.map((provider) => {
     const kind = provider.mode === "native" ? "Native OpenList driver" : "rclone collector";
     return `<article class="card">
@@ -91,14 +141,16 @@ function storageConnectionsPage(appName) {
   }).join("");
   return new Response(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect storage · ${escapedName}</title>
+<title>Integration settings · ${escapedName}</title>
 <style>
-:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6;--ok:#22c55e}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:760px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}header p,.card p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.row span{white-space:nowrap;color:#fde68a;background:#422006;border:1px solid #854d0e;border-radius:999px;padding:4px 9px;font-size:.78rem}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:720px){main{padding:36px 18px}.grid{grid-template-columns:1fr}.row{align-items:flex-start}}
+:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:760px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}h2{margin-top:38px}header p,.card p,.service p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.services,.grid{display:grid;gap:16px}.services{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.service{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.service{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.service h3,.service p{margin:0}.service p{margin-top:4px;font-size:.88rem}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.badge,.row span{white-space:nowrap;border-radius:999px;padding:4px 9px;font-size:.76rem;font-weight:700}.operational{color:#86efac;background:#052e16;border:1px solid #166534}.configured{color:#bfdbfe;background:#172554;border:1px solid #1d4ed8}.degraded,.action_required,.row span{color:#fde68a;background:#422006;border:1px solid #854d0e}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:820px){.services{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){main{padding:36px 18px}.grid,.services{grid-template-columns:1fr}.row{align-items:flex-start}}
 </style></head><body><main>
-<header><div class="eyebrow">${escapedName} integrations</div><h1>Connect your storage accounts when ready.</h1><p>The backend, master storage, and provider drivers are prepared. Authorize accounts later without rebuilding or exposing OAuth tokens to the frontend.</p></header>
-<div class="notice"><strong>Production storage is active.</strong> Cloudflare R2, Supabase S3, and the persistent application volume remain available while source accounts are pending.</div>
+<header><div class="eyebrow">${escapedName} settings</div><h1>Integration control center.</h1><p>Live backend health, authentication, delivery, AI, and storage readiness in one frontend view. Provider account authorization can be completed later.</p></header>
+<div class="notice"><strong>System ${status.status}.</strong> Last checked ${status.checkedAt.replace(/[TZ]/g, " ").slice(0, 19)} UTC. Cloudflare R2, Supabase S3, and the persistent application volume remain active.</div>
+<h2>Core services</h2><section class="services">${services}</section>
+<h2>Storage account connections</h2>
 <section class="grid">${cards}</section>
-<div class="actions"><a class="primary" href="/@manage">Open storage manager</a><a class="secondary" href="/">Return to files</a></div>
+<div class="actions"><a class="primary" href="/@manage">Open administrator settings</a><a class="secondary" href="/api/open-box/integrations/status">View status API</a><a class="secondary" href="/">Return to files</a></div>
 <ol class="steps"><li>Sign in with the configured GitHub SSO administrator.</li><li>Authorize one provider account at a time.</li><li>Create a unique mount path using the pattern shown above.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
 <footer>No credentials are accepted or retained by this page. OAuth secrets and refresh tokens belong only in the server-side storage configuration.</footer>
 </main></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
@@ -273,8 +325,11 @@ export default {
     if (url.pathname === "/api/open-box/storage-providers" && request.method === "GET") {
       return json(storageProviderManifest());
     }
-    if (url.pathname === "/connect-storage" && request.method === "GET") {
-      return storageConnectionsPage(env.APP_NAME);
+    if (url.pathname === "/api/open-box/integrations/status" && request.method === "GET") {
+      return json(await integrationStatus(env));
+    }
+    if ((url.pathname === "/connect-storage" || url.pathname === "/settings/integrations") && request.method === "GET") {
+      return integrationSettingsPage(env.APP_NAME, await integrationStatus(env));
     }
     if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping") {
       let access = cookieValue(request, ACCESS_COOKIE);

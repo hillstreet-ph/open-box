@@ -6,8 +6,11 @@ The Cloudflare gateway exposes two credential-free onboarding surfaces:
 
 - `/connect-storage` — administrator guide for connecting Google Drive, Dropbox,
   OneDrive, and Box accounts later.
+- `/settings/integrations` — unified frontend settings and live service health.
 - `/api/open-box/storage-providers` — machine-readable provider and mount-path
   metadata for the onboarding page and operational checks.
+- `/api/open-box/integrations/status` — runtime probes for the Zeabur origin,
+  Supabase Auth, GitHub SSO configuration, Workers AI, and delivery services.
 
 These routes never accept or return OAuth credentials. Google Drive, Dropbox,
 and OneDrive credentials are added through the authenticated OpenList storage
