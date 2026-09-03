@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker, { safeNext, storageProviderManifest } from "../src/worker.js";
+import worker, { integrationStatus, safeNext, storageProviderManifest } from "../src/worker.js";
 
 test("safeNext accepts local paths", () => {
   assert.equal(safeNext("/files?dir=%2F"), "/files?dir=%2F");
@@ -21,18 +21,40 @@ test("storage manifest exposes supported providers without credentials", () => {
 });
 
 test("storage onboarding routes are served at the edge", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/ping")) return new Response("pong");
+    if (url.endsWith("/api/public/settings")) return Response.json({ data: { site_title: "Open-Box", sso_login_enabled: "true", sso_login_platform: "Github" } });
+    if (url.endsWith("/auth/v1/health")) return Response.json({ version: "test" });
+    throw new Error(`unexpected request: ${url}`);
+  };
   const env = {
     APP_NAME: "Open-Box",
     ORIGIN_URL: "https://origin.example",
     SUPABASE_URL: "https://project.supabase.co",
     SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+    AI: {},
   };
-  const api = await worker.fetch(new Request("https://open-box.space/api/open-box/storage-providers"), env);
-  assert.equal(api.status, 200);
-  assert.equal((await api.json()).providers.length, 4);
+  try {
+    const api = await worker.fetch(new Request("https://open-box.space/api/open-box/storage-providers"), env);
+    assert.equal(api.status, 200);
+    assert.equal((await api.json()).providers.length, 4);
 
-  const page = await worker.fetch(new Request("https://open-box.space/connect-storage"), env);
-  assert.equal(page.status, 200);
-  assert.match(await page.text(), /Connect your storage accounts when ready/);
-  assert.equal(page.headers.get("cache-control"), "no-store");
+    const status = await integrationStatus(env);
+    assert.equal(status.status, "operational");
+    assert.equal(status.application.githubSso, true);
+    assert.equal(status.services.every(({ state }) => state === "operational" || state === "configured"), true);
+
+    const statusApi = await worker.fetch(new Request("https://open-box.space/api/open-box/integrations/status"), env);
+    assert.equal(statusApi.status, 200);
+    assert.equal((await statusApi.json()).services.length, 6);
+
+    const page = await worker.fetch(new Request("https://open-box.space/settings/integrations"), env);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Integration control center/);
+    assert.equal(page.headers.get("cache-control"), "no-store");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
