@@ -1,5 +1,19 @@
 # Open-Box Master Storage Ingestion
 
+## Website connection readiness
+
+The Cloudflare gateway exposes two credential-free onboarding surfaces:
+
+- `/connect-storage` — administrator guide for connecting Google Drive, Dropbox,
+  OneDrive, and Box accounts later.
+- `/api/open-box/storage-providers` — machine-readable provider and mount-path
+  metadata for the onboarding page and operational checks.
+
+These routes never accept or return OAuth credentials. Google Drive, Dropbox,
+and OneDrive credentials are added through the authenticated OpenList storage
+manager. Box is collected through the rclone worker because this OpenList build
+does not include a native Box driver.
+
 ## Policy
 
 Open-Box uses a non-destructive, one-way collection model:

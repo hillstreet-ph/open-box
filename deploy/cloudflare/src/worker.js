@@ -3,6 +3,41 @@ const REFRESH_COOKIE = "open_box_refresh";
 const AI_TEXT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 const AI_EMBED_MODEL = "@cf/baai/bge-m3";
 
+const STORAGE_PROVIDERS = [
+  {
+    id: "google-drive",
+    name: "Google Drive",
+    mode: "native",
+    driver: "GoogleDrive",
+    mount: "/google-drive/<account>",
+    authorizationUrl: "https://api.oplist.org/",
+  },
+  {
+    id: "dropbox",
+    name: "Dropbox",
+    mode: "native",
+    driver: "Dropbox",
+    mount: "/dropbox/<account>",
+    authorizationUrl: "https://api.oplist.org/",
+  },
+  {
+    id: "onedrive",
+    name: "OneDrive",
+    mode: "native",
+    driver: "Onedrive",
+    mount: "/onedrive/<account>",
+    authorizationUrl: "https://api.oplist.org/",
+  },
+  {
+    id: "box",
+    name: "Box",
+    mode: "collector",
+    driver: "rclone",
+    mount: "/box/<account>",
+    authorizationUrl: "https://rclone.org/box/",
+  },
+];
+
 export function safeNext(value) {
   return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
     ? value
@@ -31,6 +66,42 @@ function json(body, status = 200, headers = {}) {
     status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
   });
+}
+
+export function storageProviderManifest() {
+  return {
+    status: "ready_for_account_authorization",
+    credentialPolicy: "provider tokens are stored server-side only",
+    sourcePolicy: "read and copy; never synchronize deletions to source accounts",
+    managerPath: "/@manage",
+    providers: STORAGE_PROVIDERS,
+  };
+}
+
+function storageConnectionsPage(appName) {
+  const escapedName = String(appName || "Open-Box").replace(/[<>&"']/g, "");
+  const cards = STORAGE_PROVIDERS.map((provider) => {
+    const kind = provider.mode === "native" ? "Native OpenList driver" : "rclone collector";
+    return `<article class="card">
+      <div class="row"><h2>${provider.name}</h2><span>Connect later</span></div>
+      <p>${kind}</p>
+      <dl><div><dt>Driver</dt><dd>${provider.driver}</dd></div><div><dt>Mount</dt><dd><code>${provider.mount}</code></dd></div></dl>
+      <a class="secondary" href="${provider.authorizationUrl}" target="_blank" rel="noreferrer">Open authorization guide</a>
+    </article>`;
+  }).join("");
+  return new Response(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connect storage · ${escapedName}</title>
+<style>
+:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6;--ok:#22c55e}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:760px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}header p,.card p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.row span{white-space:nowrap;color:#fde68a;background:#422006;border:1px solid #854d0e;border-radius:999px;padding:4px 9px;font-size:.78rem}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:720px){main{padding:36px 18px}.grid{grid-template-columns:1fr}.row{align-items:flex-start}}
+</style></head><body><main>
+<header><div class="eyebrow">${escapedName} integrations</div><h1>Connect your storage accounts when ready.</h1><p>The backend, master storage, and provider drivers are prepared. Authorize accounts later without rebuilding or exposing OAuth tokens to the frontend.</p></header>
+<div class="notice"><strong>Production storage is active.</strong> Cloudflare R2, Supabase S3, and the persistent application volume remain available while source accounts are pending.</div>
+<section class="grid">${cards}</section>
+<div class="actions"><a class="primary" href="/@manage">Open storage manager</a><a class="secondary" href="/">Return to files</a></div>
+<ol class="steps"><li>Sign in with the configured GitHub SSO administrator.</li><li>Authorize one provider account at a time.</li><li>Create a unique mount path using the pattern shown above.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
+<footer>No credentials are accepted or retained by this page. OAuth secrets and refresh tokens belong only in the server-side storage configuration.</footer>
+</main></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
 }
 
 function authHeaders(env, accessToken) {
@@ -199,6 +270,12 @@ export default {
     }
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
+    if (url.pathname === "/api/open-box/storage-providers" && request.method === "GET") {
+      return json(storageProviderManifest());
+    }
+    if (url.pathname === "/connect-storage" && request.method === "GET") {
+      return storageConnectionsPage(env.APP_NAME);
+    }
     if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping") {
       let access = cookieValue(request, ACCESS_COOKIE);
       let user = await getUser(env, access);

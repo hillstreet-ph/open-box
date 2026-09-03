@@ -10,6 +10,11 @@ Source collection remains independent:
 
 `Google Drive / Dropbox / OneDrive -> read+copy collector -> Master Storage`
 
+Account onboarding is available at `/connect-storage`. It is safe to deploy
+before provider authorization because it contains no credentials and creates no
+placeholder mounts. Provider accounts are connected later through the
+authenticated storage manager; Box uses the rclone collector.
+
 Source files are never automatically moved or deleted. Source deletion must not propagate to the master repository.
 
 ## Responsibilities
