@@ -245,7 +245,7 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 				},
 			},
 			"serverInfo": map[string]any{
-				"name":    "OpenList MCP",
+				"name":    "Open-Box MCP",
 				"version": conf.Version,
 			},
 			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openlist.fs.list, openlist.fs.get, and openlist.fs.link.",

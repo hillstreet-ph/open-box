@@ -33,5 +33,22 @@ type = onedrive
 [onedrive-business-02]
 type = onedrive
 
+[box-personal-01]
+type = box
+
+[box-business-01]
+type = box
+
+# TeraBox requires a separately approved rclone-compatible runtime adapter.
+# Never commit browser cookies or session material here.
+# [terabox-personal-01]
+# type = <approved-adapter>
+
+[mega-personal-01]
+type = mega
+
+[mega-business-01]
+type = mega
+
 # MASTER STORAGE is intentionally not defined with credentials here.
 # Configure a runtime remote named `master` (S3-compatible, filesystem, etc.).

@@ -7,6 +7,7 @@ services:
       MASTER_REMOTE: ${MASTER_REMOTE:-master}
       MASTER_ROOT: ${MASTER_ROOT:-open-box}
       RCLONE_CONFIG: /config/rclone/rclone.conf
+      SOURCE_REMOTES: ${SOURCE_REMOTES:-}
     volumes:
       - ${RCLONE_CONFIG_HOST_PATH:-./rclone.conf}:/config/rclone/rclone.conf:ro
       - ./collect.sh:/scripts/collect.sh:ro

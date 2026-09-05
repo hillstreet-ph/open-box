@@ -2,14 +2,24 @@ const ACCESS_COOKIE = "open_box_access";
 const REFRESH_COOKIE = "open_box_refresh";
 const AI_TEXT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 const AI_EMBED_MODEL = "@cf/baai/bge-m3";
+const OPEN_BOX_BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Open-Box</title><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a78bfa"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs><rect width="256" height="256" rx="56" fill="#09090b"/><path d="M43 82 128 38l85 44-85 44-85-44Zm0 23 73 38v76l-73-40v-74Zm170 0v74l-73 40v-76l73-38Z" fill="url(#g)"/><path d="m82 82 46-24 46 24-46 24-46-24Z" fill="#ede9fe" fill-opacity=".92"/></svg>`;
 
 const STORAGE_PROVIDERS = [
   {
     id: "google-drive",
-    name: "Google Drive",
+    name: "Google Workspace & Drive",
     mode: "native",
     driver: "GoogleDrive",
     mount: "/google-drive/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal", "workspace", "shared-drive"],
+    services: ["Drive", "Docs", "Sheets", "Slides", "Gmail"],
+    scopeProfiles: {
+      files: ["drive.readonly"],
+      workspace: ["drive.readonly", "documents.readonly", "spreadsheets.readonly"],
+      workspaceWithGmail: ["drive.readonly", "documents.readonly", "spreadsheets.readonly", "gmail.readonly"],
+    },
+    note: "Docs, Sheets, and Slides files are collected through Drive. Gmail access is optional and requires a separately approved Gmail scope.",
     authorizationUrl: "https://api.oplist.org/",
   },
   {
@@ -18,6 +28,9 @@ const STORAGE_PROVIDERS = [
     mode: "native",
     driver: "Dropbox",
     mount: "/dropbox/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal", "business"],
+    services: ["Files", "Paper exports"],
     authorizationUrl: "https://api.oplist.org/",
   },
   {
@@ -26,6 +39,9 @@ const STORAGE_PROVIDERS = [
     mode: "native",
     driver: "Onedrive",
     mount: "/onedrive/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal", "microsoft-365", "sharepoint"],
+    services: ["OneDrive", "Office files", "SharePoint document libraries"],
     authorizationUrl: "https://api.oplist.org/",
   },
   {
@@ -34,7 +50,33 @@ const STORAGE_PROVIDERS = [
     mode: "collector",
     driver: "rclone",
     mount: "/box/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal", "business", "enterprise"],
+    services: ["Files"],
     authorizationUrl: "https://rclone.org/box/",
+  },
+  {
+    id: "terabox",
+    name: "TeraBox",
+    mode: "collector",
+    driver: "rclone-compatible adapter",
+    mount: "/terabox/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal"],
+    services: ["Files"],
+    note: "Use an approved runtime adapter. Never paste browser cookies into the Open-Box website or repository.",
+    authorizationUrl: "https://rclone.org/",
+  },
+  {
+    id: "mega",
+    name: "MEGA",
+    mode: "collector",
+    driver: "rclone",
+    mount: "/mega/<account>",
+    supportsMultipleAccounts: true,
+    accountTypes: ["personal", "business"],
+    services: ["Files"],
+    authorizationUrl: "https://rclone.org/mega/",
   },
 ];
 
@@ -72,6 +114,7 @@ export function storageProviderManifest() {
   return {
     status: "ready_for_account_authorization",
     credentialPolicy: "provider tokens are stored server-side only",
+    accountPolicy: "multiple accounts are supported; every account must use a unique label and mount path",
     sourcePolicy: "read and copy; never synchronize deletions to source accounts",
     managerPath: "/@manage",
     providers: STORAGE_PROVIDERS,
@@ -105,7 +148,7 @@ export async function integrationStatus(env) {
   }
   const services = [
     { id: "cloudflare", name: "Cloudflare Gateway", state: "operational", detail: "Edge, TLS, routing, and settings UI" },
-    { id: "zeabur", name: "Zeabur Runtime", state: origin.ok ? "operational" : "degraded", detail: "OpenList application origin" },
+    { id: "zeabur", name: "Zeabur Runtime", state: origin.ok ? "operational" : "degraded", detail: "Open-Box application origin" },
     { id: "supabase", name: "Supabase", state: supabase.ok ? "operational" : "degraded", detail: "Postgres, Auth, Storage, and backups" },
     { id: "github", name: "GitHub SSO", state: openList.githubSso ? "operational" : "action_required", detail: "Administrator authentication" },
     { id: "workers-ai", name: "Workers AI", state: env.AI ? "operational" : "action_required", detail: "Edge AI chat and embeddings" },
@@ -131,11 +174,15 @@ function integrationSettingsPage(appName, status) {
     <div><h3>${service.name}</h3><p>${service.detail}</p></div>${statusBadge(service.state)}
   </article>`).join("");
   const cards = STORAGE_PROVIDERS.map((provider) => {
-    const kind = provider.mode === "native" ? "Native OpenList driver" : "rclone collector";
+    const kind = provider.mode === "native" ? "Native Open-Box storage driver" : "Open-Box collector";
+    const services = provider.services.map((service) => `<span class="chip">${service}</span>`).join("");
+    const accountTypes = provider.accountTypes.join(", ");
     return `<article class="card">
       <div class="row"><h2>${provider.name}</h2><span>Connect later</span></div>
-      <p>${kind}</p>
-      <dl><div><dt>Driver</dt><dd>${provider.driver}</dd></div><div><dt>Mount</dt><dd><code>${provider.mount}</code></dd></div></dl>
+      <p>${kind} · Multiple accounts supported</p>
+      <div class="chips">${services}</div>
+      <dl><div><dt>Account types</dt><dd>${accountTypes}</dd></div><div><dt>Driver</dt><dd>${provider.driver}</dd></div><div><dt>Mount</dt><dd><code>${provider.mount}</code></dd></div></dl>
+      ${provider.note ? `<p class="note">${provider.note}</p>` : ""}
       <a class="secondary" href="${provider.authorizationUrl}" target="_blank" rel="noreferrer">Open authorization guide</a>
     </article>`;
   }).join("");
@@ -143,15 +190,15 @@ function integrationSettingsPage(appName, status) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Integration settings · ${escapedName}</title>
 <style>
-:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:760px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}h2{margin-top:38px}header p,.card p,.service p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.services,.grid{display:grid;gap:16px}.services{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.service{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.service{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.service h3,.service p{margin:0}.service p{margin-top:4px;font-size:.88rem}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.badge,.row span{white-space:nowrap;border-radius:999px;padding:4px 9px;font-size:.76rem;font-weight:700}.operational{color:#86efac;background:#052e16;border:1px solid #166534}.configured{color:#bfdbfe;background:#172554;border:1px solid #1d4ed8}.degraded,.action_required,.row span{color:#fde68a;background:#422006;border:1px solid #854d0e}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:820px){.services{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){main{padding:36px 18px}.grid,.services{grid-template-columns:1fr}.row{align-items:flex-start}}
+:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:780px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}h2{margin-top:38px}header p,.card p,.service p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.services,.grid{display:grid;gap:16px}.services{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.service{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.service{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.service h3,.service p{margin:0}.service p{margin-top:4px;font-size:.88rem}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.badge,.row>span,.chip{white-space:nowrap;border-radius:999px;padding:4px 9px;font-size:.76rem;font-weight:700}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.chip{color:#ddd6fe;background:#2e1065;border:1px solid #6d28d9}.note{font-size:.87rem}.operational{color:#86efac;background:#052e16;border:1px solid #166534}.configured{color:#bfdbfe;background:#172554;border:1px solid #1d4ed8}.degraded,.action_required,.row>span{color:#fde68a;background:#422006;border:1px solid #854d0e}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:820px){.services{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){main{padding:36px 18px}.grid,.services{grid-template-columns:1fr}.row{align-items:flex-start}dd{max-width:58%}}
 </style></head><body><main>
-<header><div class="eyebrow">${escapedName} settings</div><h1>Integration control center.</h1><p>Live backend health, authentication, delivery, AI, and storage readiness in one frontend view. Provider account authorization can be completed later.</p></header>
+<header><div class="eyebrow">${escapedName} settings</div><h1>Your clouds. One Open‑Box.</h1><p>Connect multiple personal and workspace accounts without mixing their identities. Every source keeps a unique mount and is collected read-only into master storage.</p></header>
 <div class="notice"><strong>System ${status.status}.</strong> Last checked ${status.checkedAt.replace(/[TZ]/g, " ").slice(0, 19)} UTC. Cloudflare R2, Supabase S3, and the persistent application volume remain active.</div>
 <h2>Core services</h2><section class="services">${services}</section>
 <h2>Storage account connections</h2>
 <section class="grid">${cards}</section>
 <div class="actions"><a class="primary" href="/@manage">Open administrator settings</a><a class="secondary" href="/api/open-box/integrations/status">View status API</a><a class="secondary" href="/">Return to files</a></div>
-<ol class="steps"><li>Sign in with the configured GitHub SSO administrator.</li><li>Authorize one provider account at a time.</li><li>Create a unique mount path using the pattern shown above.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
+<ol class="steps"><li>Sign in with the configured GitHub SSO administrator.</li><li>Authorize one provider account at a time.</li><li>Give every account a unique slug, such as <strong>personal-01</strong> or <strong>workspace-01</strong>.</li><li>Choose only the services and read-only scopes that account needs.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
 <footer>No credentials are accepted or retained by this page. OAuth secrets and refresh tokens belong only in the server-side storage configuration.</footer>
 </main></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
 }
@@ -322,6 +369,16 @@ export default {
     }
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
+    if (url.pathname === "/open-box-brand.svg" && request.method === "GET") {
+      return new Response(OPEN_BOX_BRAND_SVG, {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "public, max-age=86400",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }
     if (url.pathname === "/api/open-box/storage-providers" && request.method === "GET") {
       return json(storageProviderManifest());
     }

@@ -101,7 +101,7 @@ func (d *FtpMainDriver) ClientConnected(cc ftpserver.ClientContext) (string, err
 	}
 	defer d.shutdownLock.RUnlock()
 	d.clients[cc.ID()] = cc
-	return "OpenList FTP Endpoint", nil
+	return "Open-Box FTP Endpoint", nil
 }
 
 func (d *FtpMainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
