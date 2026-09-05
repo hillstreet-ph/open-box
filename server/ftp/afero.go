@@ -66,7 +66,7 @@ func (a *AferoAdapter) Stat(name string) (os.FileInfo, error) {
 }
 
 func (a *AferoAdapter) Name() string {
-	return "OpenList FTP Endpoint"
+	return "Open-Box FTP Endpoint"
 }
 
 func (a *AferoAdapter) Chmod(_ string, _ os.FileMode) error {

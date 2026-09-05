@@ -7,7 +7,9 @@ set -eu
 
 # IMPORTANT: rclone copy is used, never sync.
 # Source deletions therefore do not delete objects already collected in master.
-SOURCES="
+: "${SOURCE_REMOTES:=}"
+
+DEFAULT_SOURCES="
 google-personal-01
 google-personal-02
 google-workspace-01
@@ -17,7 +19,13 @@ dropbox-account-02
 onedrive-personal-01
 onedrive-business-01
 onedrive-business-02
+box-personal-01
+box-business-01
+mega-personal-01
+mega-business-01
 "
+
+SOURCES="${SOURCE_REMOTES:-$DEFAULT_SOURCES}"
 
 mkdir -p /logs
 

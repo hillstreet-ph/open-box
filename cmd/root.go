@@ -12,11 +12,11 @@ import (
 )
 
 var RootCmd = &cobra.Command{
-	Use:   "openlist",
-	Short: "A file list program that supports multiple storage.",
-	Long: `A file list program that supports multiple storage,
-built with love by OpenListTeam.
-Complete documentation is available at https://doc.oplist.org/`,
+	Use:   "open-box",
+	Short: "Open-Box unified multi-cloud storage hub.",
+	Long: `Open-Box is HillStreet's unified multi-cloud storage hub,
+powered by the upstream OpenList engine.
+Production service: https://open-box.space/`,
 }
 
 func Execute() {

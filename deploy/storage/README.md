@@ -4,8 +4,8 @@
 
 The Cloudflare gateway exposes two credential-free onboarding surfaces:
 
-- `/connect-storage` — administrator guide for connecting Google Drive, Dropbox,
-  OneDrive, and Box accounts later.
+- `/connect-storage` — administrator guide for connecting multiple Google
+  Workspace/Drive, Dropbox, OneDrive, Box, TeraBox, and MEGA accounts later.
 - `/settings/integrations` — unified frontend settings and live service health.
 - `/api/open-box/storage-providers` — machine-readable provider and mount-path
   metadata for the onboarding page and operational checks.
@@ -13,15 +13,33 @@ The Cloudflare gateway exposes two credential-free onboarding surfaces:
   Supabase Auth, GitHub SSO configuration, Workers AI, and delivery services.
 
 These routes never accept or return OAuth credentials. Google Drive, Dropbox,
-and OneDrive credentials are added through the authenticated OpenList storage
-manager. Box is collected through the rclone worker because this OpenList build
-does not include a native Box driver.
+and OneDrive credentials are added through the authenticated Open-Box storage
+manager. Box and MEGA are collected through the rclone worker. TeraBox must use
+an approved runtime adapter and is intentionally not preconfigured with browser
+cookies or session data.
+
+Every provider supports multiple accounts. Give each account a stable unique
+slug and mount path; never reuse a mount for a different identity.
+The collector accepts a whitespace-separated `SOURCE_REMOTES` list, so adding
+accounts does not require editing the script. When it is unset, the documented
+example accounts are collected.
+
+## Google service profiles
+
+- **Files:** Drive read-only. Google Docs, Sheets, and Slides are represented by
+  Drive files and can be exported during collection.
+- **Workspace:** Drive, Docs, and Sheets read-only scopes.
+- **Workspace + Gmail:** the Workspace profile plus Gmail read-only. Gmail is a
+  separate API permission and should be enabled only for accounts that need it.
+
+OAuth refresh tokens and provider secrets remain server-side. They must never
+be returned by `/api/open-box/storage-providers` or written into browser state.
 
 ## Policy
 
 Open-Box uses a non-destructive, one-way collection model:
 
-`Google Drive / Dropbox / OneDrive -> rclone copy -> Master Storage -> OpenList`
+`Google / Dropbox / OneDrive / Box / TeraBox / MEGA -> copy -> Master Storage -> Open-Box`
 
 Original files remain in their source providers. Source deletion never automatically deletes the collected master copy. Master deletion never modifies a source account.
 
@@ -30,6 +48,9 @@ Original files remain in their source providers. Source deletion never automatic
 - Google Drive: Personal-01, Personal-02, Workspace-01, Shared-Drive-01
 - Dropbox: Account-01, Account-02
 - OneDrive: Personal-01, Business-01, Business-02
+- Box: Personal-01, Business-01
+- TeraBox: Personal-01 (after an approved adapter is configured)
+- MEGA: Personal-01, Business-01
 
 ## Security
 
@@ -51,6 +72,11 @@ open-box/
     onedrive-personal-01/
     onedrive-business-01/
     onedrive-business-02/
+    box-personal-01/
+    box-business-01/
+    terabox-personal-01/
+    mega-personal-01/
+    mega-business-01/
 ```
 
 This first implementation preserves provenance by source. A catalog/index layer can subsequently expose a logical Unified Library and content-hash deduplication without deleting source originals.
@@ -63,6 +89,7 @@ Run `deploy/storage/collect.sh` in an rclone container/worker with:
 - `/logs` persistent
 - environment `MASTER_REMOTE=master`
 - environment `MASTER_ROOT=open-box`
+- optional environment `SOURCE_REMOTES="google-personal-01 google-personal-02 ..."`
 
 The script deliberately uses `rclone copy`, not `rclone sync`.
 
@@ -72,4 +99,4 @@ Do not deduplicate by filename. The inventory layer should track provider, accou
 
 ## Recovery
 
-OpenList application state must remain on its persistent `/opt/openlist/data` volume. Master Storage must be independent of the OpenList container/server. If OpenList is replaced, restore its persistent state and remount Master Storage; source and master files remain independently stored.
+Open-Box application state must remain on its compatibility volume at `/opt/openlist/data`. Master Storage must be independent of the application container/server. If Open-Box is replaced, restore its persistent state and remount Master Storage; source and master files remain independently stored.

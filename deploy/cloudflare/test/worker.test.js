@@ -15,7 +15,11 @@ test("safeNext rejects external and protocol-relative redirects", () => {
 test("storage manifest exposes supported providers without credentials", () => {
   const manifest = storageProviderManifest();
   assert.equal(manifest.status, "ready_for_account_authorization");
-  assert.deepEqual(manifest.providers.map(({ id }) => id), ["google-drive", "dropbox", "onedrive", "box"]);
+  assert.deepEqual(manifest.providers.map(({ id }) => id), ["google-drive", "dropbox", "onedrive", "box", "terabox", "mega"]);
+  assert.equal(manifest.providers.every(({ supportsMultipleAccounts }) => supportsMultipleAccounts), true);
+  const google = manifest.providers.find(({ id }) => id === "google-drive");
+  assert.deepEqual(google.services, ["Drive", "Docs", "Sheets", "Slides", "Gmail"]);
+  assert.equal(google.scopeProfiles.workspaceWithGmail.includes("gmail.readonly"), true);
   assert.equal(JSON.stringify(manifest).includes("secret"), false);
   assert.equal(JSON.stringify(manifest).includes("token"), true);
 });
@@ -39,7 +43,12 @@ test("storage onboarding routes are served at the edge", async () => {
   try {
     const api = await worker.fetch(new Request("https://open-box.space/api/open-box/storage-providers"), env);
     assert.equal(api.status, 200);
-    assert.equal((await api.json()).providers.length, 4);
+    assert.equal((await api.json()).providers.length, 6);
+
+    const brand = await worker.fetch(new Request("https://open-box.space/open-box-brand.svg"), env);
+    assert.equal(brand.status, 200);
+    assert.equal(brand.headers.get("content-type"), "image/svg+xml; charset=utf-8");
+    assert.match(await brand.text(), /<title id="title">Open-Box<\/title>/);
 
     const status = await integrationStatus(env);
     assert.equal(status.status, "operational");
@@ -52,7 +61,10 @@ test("storage onboarding routes are served at the edge", async () => {
 
     const page = await worker.fetch(new Request("https://open-box.space/settings/integrations"), env);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /Integration control center/);
+    const html = await page.text();
+    assert.match(html, /Your clouds\. One Open‑Box\./);
+    assert.match(html, /TeraBox/);
+    assert.match(html, /MEGA/);
     assert.equal(page.headers.get("cache-control"), "no-store");
   } finally {
     globalThis.fetch = originalFetch;
