@@ -354,6 +354,16 @@ async function proxy(request, env, url) {
   headers.set("X-Forwarded-Host", url.host);
   headers.set("X-Forwarded-Proto", "https");
   const response = await fetch(new Request(target, { method: request.method, headers, body: request.body, redirect: "manual" }));
+  if (request.method === "GET" && url.pathname === "/api/public/settings" && response.ok) {
+    const payload = await response.json().catch(() => null);
+    if (payload?.data) {
+      payload.data.site_title = "Open-Box";
+      payload.data.logo = `${url.origin}/open-box-brand.svg`;
+      payload.data.favicon = `${url.origin}/open-box-brand.svg`;
+      payload.data.main_color = "#7c3aed";
+      return json(payload, response.status);
+    }
+  }
   const output = new Response(response.body, response);
   output.headers.set("X-Content-Type-Options", "nosniff");
   output.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
