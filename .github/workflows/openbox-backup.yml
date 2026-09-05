@@ -10,54 +10,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check secrets
-        id: check
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -z "$SUPABASE_DB_URL" ]; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "SUPABASE_DB_URL not set — skip"
-          else
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
+          test -n "$SUPABASE_PROJECT_REF" || { echo "::error::SUPABASE_PROJECT_REF is required"; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::SUPABASE_SERVICE_ROLE_KEY is required"; exit 1; }
 
       - name: Install pg_dump
-        if: steps.check.outputs.present == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
       - name: Dump
-        if: steps.check.outputs.present == 'true'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -euo pipefail
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           FILE="openbox-db-${STAMP}.sql.gz"
           pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl | gzip -9 > "$FILE"
+          test -s "$FILE"
+          gzip -t "$FILE"
+          CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)
           echo "FILE=$FILE" >> "$GITHUB_ENV"
+          echo "CHECKSUM=$CHECKSUM" >> "$GITHUB_ENV"
           ls -lh "$FILE"
 
       - uses: actions/upload-artifact@v4
-        if: steps.check.outputs.present == 'true'
         with:
           name: openbox-db-backup
           path: "*.sql.gz"
           retention-days: 14
 
       - name: Ensure bucket + upload
-        if: steps.check.outputs.present == 'true'
         env:
           REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -z "$REF" ] || [ -z "$KEY" ]; then
-            echo "Storage upload skipped (missing REF/KEY)"
-            exit 0
-          fi
+          set -euo pipefail
           curl -sS -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/json" \
             -d '{"id":"open-box-backups","name":"open-box-backups","public":false}' || true
-          curl -sS -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
+          curl --fail-with-body -sS -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/gzip" \
-            --data-binary "@${FILE}" -w "\nHTTP %{http_code}\n"
+            --data-binary "@${FILE}"
+          jq -n \
+            --arg backup_id "$FILE" \
+            --arg location "supabase://open-box-backups/$FILE" \
+            --arg checksum "sha256:$CHECKSUM" \
+            '[{backup_id:$backup_id,kind:"postgresql",location:$location,checksum:$checksum,verification_status:"verified"}]' \
+            > /tmp/backup-manifest.json
+          curl --fail-with-body -sS -X POST "https://${REF}.supabase.co/rest/v1/openbox_backup_manifest" \
+            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
+            -H "Content-Type: application/json" -H "Prefer: return=minimal" \
+            --data-binary @/tmp/backup-manifest.json
