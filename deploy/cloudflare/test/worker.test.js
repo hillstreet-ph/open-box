@@ -27,7 +27,7 @@ test("storage manifest exposes supported providers without credentials", () => {
 test("storage onboarding routes are served at the edge", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
-    const url = String(input);
+    const url = typeof input === "string" ? input : input.url;
     if (url.endsWith("/ping")) return new Response("pong");
     if (url.endsWith("/api/public/settings")) return Response.json({ data: { site_title: "Open-Box", sso_login_enabled: "true", sso_login_platform: "Github" } });
     if (url.endsWith("/auth/v1/health")) return Response.json({ version: "test" });
@@ -50,6 +50,11 @@ test("storage onboarding routes are served at the edge", async () => {
     assert.equal(brand.headers.get("content-type"), "image/svg+xml; charset=utf-8");
     assert.match(await brand.text(), /<title id="title">Open-Box<\/title>/);
 
+    const brandHead = await worker.fetch(new Request("https://open-box.space/open-box-brand.svg", { method: "HEAD" }), env);
+    assert.equal(brandHead.status, 200);
+    assert.equal(brandHead.headers.get("content-type"), "image/svg+xml; charset=utf-8");
+    assert.equal(await brandHead.text(), "");
+
     const status = await integrationStatus(env);
     assert.equal(status.status, "operational");
     assert.equal(status.application.githubSso, true);
@@ -58,6 +63,13 @@ test("storage onboarding routes are served at the edge", async () => {
     const statusApi = await worker.fetch(new Request("https://open-box.space/api/open-box/integrations/status"), env);
     assert.equal(statusApi.status, 200);
     assert.equal((await statusApi.json()).services.length, 6);
+
+    const settings = await worker.fetch(new Request("https://open-box.space/api/public/settings"), env);
+    const settingsPayload = await settings.json();
+    assert.equal(settingsPayload.data.site_title, "Open-Box");
+    assert.equal(settingsPayload.data.logo, "https://open-box.space/open-box-brand.svg");
+    assert.equal(settingsPayload.data.favicon, "https://open-box.space/open-box-brand.svg");
+    assert.equal(settingsPayload.data.main_color, "#7c3aed");
 
     const page = await worker.fetch(new Request("https://open-box.space/settings/integrations"), env);
     assert.equal(page.status, 200);
