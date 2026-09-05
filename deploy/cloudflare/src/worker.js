@@ -369,8 +369,8 @@ export default {
     }
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
-    if (url.pathname === "/open-box-brand.svg" && request.method === "GET") {
-      return new Response(OPEN_BOX_BRAND_SVG, {
+    if (url.pathname === "/open-box-brand.svg" && (request.method === "GET" || request.method === "HEAD")) {
+      return new Response(request.method === "HEAD" ? null : OPEN_BOX_BRAND_SVG, {
         headers: {
           "content-type": "image/svg+xml; charset=utf-8",
           "cache-control": "public, max-age=86400",

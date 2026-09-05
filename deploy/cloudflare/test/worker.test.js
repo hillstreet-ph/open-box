@@ -50,6 +50,11 @@ test("storage onboarding routes are served at the edge", async () => {
     assert.equal(brand.headers.get("content-type"), "image/svg+xml; charset=utf-8");
     assert.match(await brand.text(), /<title id="title">Open-Box<\/title>/);
 
+    const brandHead = await worker.fetch(new Request("https://open-box.space/open-box-brand.svg", { method: "HEAD" }), env);
+    assert.equal(brandHead.status, 200);
+    assert.equal(brandHead.headers.get("content-type"), "image/svg+xml; charset=utf-8");
+    assert.equal(await brandHead.text(), "");
+
     const status = await integrationStatus(env);
     assert.equal(status.status, "operational");
     assert.equal(status.application.githubSso, true);
