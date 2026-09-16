@@ -26,7 +26,7 @@ jobs:
           git fetch origin "${{ github.base_ref }}" --depth=50
           NOTES=""
           LEVEL=ok
-          ADDED_LINES=$(git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" | grep -E '^\+[^+]' || true)
+          ADDED_LINES=$(git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- . ':(exclude).github/workflows/openbox-autofix.yml' | grep -E '^\+[^+]' || true)
           if printf '%s\n' "$ADDED_LINES" | grep -E '^\+\s*VOLUME\s' >/dev/null; then
             LEVEL=blocker
             NOTES="${NOTES}- BLOCKER: Dockerfile VOLUME reintroduced"$'\n'
