@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## HillStreet worker protocol
+
+Before automated work, read [the repository AI worker protocol](docs/AI_WORKER_PROTOCOL.md). It defines the search, task-lock, review, release, and deployment controls that supplement these local instructions.
+
 ## Issues
 
 Before creating an issue, review the available issue templates in the `.github` directory.

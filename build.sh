@@ -20,10 +20,10 @@ fi
 
 if [ "$1" = "dev" ]; then
   version="dev"
-  webVersion="rolling"
+  webVersion="edge"
 elif [ "$1" = "beta" ]; then
   version="beta"
-  webVersion="rolling"
+  webVersion="edge"
 else
   git tag -d beta || true
   # Always true if there's no tag
@@ -39,7 +39,8 @@ else
   echo "using standard frontend"
 fi
 
-ldflags="\
+RefreshLdflags() {
+  ldflags="\
 -w -s \
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$builtAt' \
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=$gitAuthor' \
@@ -47,6 +48,8 @@ ldflags="\
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$version' \
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$webVersion' \
 "
+}
+RefreshLdflags
 
 # Keep sqlite driver tag selection centralized to avoid target drift.
 GetBuildTagsForTarget() {
@@ -97,43 +100,60 @@ AssertStaticBinary() {
 }
 
 FetchWebRolling() {
-  if ! pre_release_json=$(eval "curl -fsSL --max-time 5 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/rolling\""); then
-    echo "rolling frontend release is unavailable; falling back to the latest stable release"
+  if ! pre_release_json=$(eval "curl -fsSL --max-time 5 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/edge\""); then
+    echo "edge frontend release is unavailable; falling back to the latest stable release"
     FetchWebRelease
     return
   fi
 
-  pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
-  
-  # There is no lite for rolling
+  pre_release_tag=$(echo "$pre_release_json" | jq -r '.tag_name // empty')
+  pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[]?.browser_download_url // empty')
+
+  # There is no lite build for the edge channel.
   pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\\.tar\\.gz$" || true)
 
-  if [ -z "$pre_release_tar_url" ]; then
-    echo "rolling frontend artifact is unavailable; falling back to the latest stable release"
+  if [ -z "$pre_release_tag" ] || [ -z "$pre_release_tar_url" ]; then
+    echo "edge frontend metadata or artifact is unavailable; falling back to the latest stable release"
     FetchWebRelease
     return
   fi
 
-  curl -fsSL --retry 3 "$pre_release_tar_url" -o dist.tar.gz
+  if ! curl -fsSL --retry 3 "$pre_release_tar_url" -o dist.tar.gz; then
+    rm -f dist.tar.gz
+    echo "edge frontend download failed; falling back to the latest stable release"
+    FetchWebRelease
+    return
+  fi
+
   rm -rf public/dist && mkdir -p public/dist
   tar -zxvf dist.tar.gz -C public/dist
-  rm -rf dist.tar.gz
+  rm -f dist.tar.gz
+  webVersion="$pre_release_tag"
+  RefreshLdflags
 }
 
 FetchWebRelease() {
-  release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/latest\"")
-  release_assets=$(echo "$release_json" | jq -r '.assets[].browser_download_url')
-  
+  release_json=$(eval "curl -fsSL --max-time 5 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/latest\"")
+  release_tag=$(echo "$release_json" | jq -r '.tag_name // empty')
+  release_assets=$(echo "$release_json" | jq -r '.assets[]?.browser_download_url // empty')
+
   if [ "$useLite" = true ]; then
-    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist-lite" | grep "\.tar\.gz$")
+    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist-lite" | grep "\\.tar\\.gz$" || true)
   else
-    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
+    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\\.tar\\.gz$" || true)
   fi
-  
-  curl -fsSL "$release_tar_url" -o dist.tar.gz
+
+  if [ -z "$release_tag" ] || [ -z "$release_tar_url" ]; then
+    echo "Error: latest stable frontend metadata or artifact is unavailable"
+    return 1
+  fi
+
+  curl -fsSL --retry 3 "$release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
   tar -zxvf dist.tar.gz -C public/dist
-  rm -rf dist.tar.gz
+  rm -f dist.tar.gz
+  webVersion="$release_tag"
+  RefreshLdflags
 }
 
 BuildWinArm64() {
