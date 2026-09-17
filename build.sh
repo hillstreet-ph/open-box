@@ -51,6 +51,12 @@ RefreshLdflags() {
 }
 RefreshLdflags
 
+ExportWebVersion() {
+  if [ -n "${GITHUB_ENV:-}" ]; then
+    echo "WEB_VERSION=$webVersion" >> "$GITHUB_ENV"
+  fi
+}
+
 # Keep sqlite driver tag selection centralized to avoid target drift.
 GetBuildTagsForTarget() {
   local target="$1"
@@ -131,6 +137,7 @@ FetchWebRolling() {
   rm -f dist.tar.gz
   webVersion="$pre_release_tag"
   RefreshLdflags
+  ExportWebVersion
 }
 
 FetchWebRelease() {
@@ -156,6 +163,7 @@ FetchWebRelease() {
   rm -f dist.tar.gz
   webVersion="$release_tag"
   RefreshLdflags
+  ExportWebVersion
 }
 
 BuildWinArm64() {
