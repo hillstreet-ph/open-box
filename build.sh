@@ -125,7 +125,8 @@ FetchWebRolling() {
     return
   fi
 
-  rm -rf public/dist && mkdir -p public/dist
+  if [ -d public/dist ]; then rm -r public/dist; fi
+  mkdir -p public/dist
   tar -zxvf dist.tar.gz -C public/dist
   rm -f dist.tar.gz
   webVersion="$pre_release_tag"
@@ -149,7 +150,8 @@ FetchWebRelease() {
   fi
 
   curl -fsSL --retry 3 "$release_tar_url" -o dist.tar.gz
-  rm -rf public/dist && mkdir -p public/dist
+  if [ -d public/dist ]; then rm -r public/dist; fi
+  mkdir -p public/dist
   tar -zxvf dist.tar.gz -C public/dist
   rm -f dist.tar.gz
   webVersion="$release_tag"
