@@ -56,10 +56,19 @@ func replaceStrings(content string, replacements map[string]string) string {
 	return content
 }
 
+func isMutableWebVersion(version string) bool {
+	switch version {
+	case "", "beta", "dev", "rolling", "edge":
+		return true
+	default:
+		return false
+	}
+}
+
 func initIndex(siteConfig SiteConfig) {
 	utils.Log.Debug("Initializing index.html...")
-	// dist_dir is empty and cdn is not empty, and web_version is empty or beta or dev or rolling
-	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && (conf.WebVersion == "" || conf.WebVersion == "beta" || conf.WebVersion == "dev" || conf.WebVersion == "rolling") {
+	// Fetch the mutable channel index from the CDN so it matches current hashed assets.
+	if conf.Conf.DistDir == "" && conf.Conf.Cdn != "" && isMutableWebVersion(conf.WebVersion) {
 		utils.Log.Infof("Fetching index.html from CDN: %s/index.html...", siteConfig.Cdn)
 		resp, err := base.RestyClient.R().
 			SetHeader("Accept", "text/html").
