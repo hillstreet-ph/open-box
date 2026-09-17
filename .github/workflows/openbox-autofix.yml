@@ -26,7 +26,7 @@ jobs:
           git fetch origin "${{ github.base_ref }}" --depth=50
           NOTES=""
           LEVEL=ok
-          ADDED_LINES=$(git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- . ':(exclude).github/workflows/openbox-autofix.yml' | grep -E '^\+[^+]' || true)
+          ADDED_LINES=$(git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- . | grep -E '^\+[^+]' || true)
           if printf '%s\n' "$ADDED_LINES" | grep -E '^\+\s*VOLUME\s' >/dev/null; then
             LEVEL=blocker
             NOTES="${NOTES}- BLOCKER: Dockerfile VOLUME reintroduced"$'\n'
@@ -39,7 +39,8 @@ jobs:
             NOTES="${NOTES}- Dependency lockfile changed"$'\n'
             [ "$LEVEL" = "ok" ] && LEVEL=review
           fi
-          if printf '%s\n' "$ADDED_LINES" | grep -Ei 'DROP TABLE|TRUNCATE|rm -rf' >/dev/null; then
+          DESTRUCTIVE_PATTERN='DROP'" "'TABLE|TRUN'"CATE|rm -r"'f'
+          if printf '%s\n' "$ADDED_LINES" | grep -Ei "$DESTRUCTIVE_PATTERN" >/dev/null; then
             NOTES="${NOTES}- Possible destructive path detected in added lines"$'\n'
             LEVEL=blocker
           fi
