@@ -12,5 +12,6 @@ AUTH_REQUIRED = "false"
 [ai]
 binding = "AI"
 
-# Set SUPABASE_PUBLISHABLE_KEY with `wrangler secret put`.
+# Bind the existing SUPABASE_PUBLISHABLE_KEY for huadtiuuoiriqrjpjxhr in the provider secret store.
+# Verify /auth/me, callback, and refresh with that same project before cutover.
 # Enable only after the GitHub provider can read the authenticated user's email and the full callback test passes.
