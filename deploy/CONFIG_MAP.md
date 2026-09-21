@@ -35,7 +35,7 @@ Never commit secret values. Store secrets only in provider secret managers.
 | DNS CNAME apex | → `open-box-space.zeabur.app` (proxied) |
 | Worker `open-box-gateway` | Front door + `/auth/*` |
 | Worker binding `ORIGIN_URL` | Zeabur origin |
-| Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway; both must belong to `huadtiuuoiriqrjpjxhr` |
+| Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway; both must belong to `huadtiuuoiriqrjpjxhr`; bind the existing matching key reference without rotating it |
 | Worker binding `AUTH_REQUIRED` | `false` until forced auth desired |
 | R2 `open-box-files` / `open-box-backups` | Object storage |
 

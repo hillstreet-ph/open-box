@@ -48,8 +48,9 @@ Cloudflare Worker bindings:
 - `APP_NAME=Open-Box`
 - `ORIGIN_URL=https://open-box-space.zeabur.app`
 - `SUPABASE_URL=https://huadtiuuoiriqrjpjxhr.supabase.co`
-- `SUPABASE_PUBLISHABLE_KEY` (secret binding): the existing publishable key for
-  the same `huadtiuuoiriqrjpjxhr` project as `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_KEY` (secret binding): bind the existing publishable-key
+  reference for the same `huadtiuuoiriqrjpjxhr` project as `SUPABASE_URL`; do
+  not rotate or copy its value during this configuration repair
 - `AUTH_REQUIRED=false` until login flow is verified end-to-end
 
 ## Persistence
@@ -78,7 +79,8 @@ Before starting the new runtime (startup can migrate tables):
 2. Review any required schema/data migration separately. Validate a backup and
    restore into an isolated target, and retain the old image/configuration as a
    rollback target. Do not automatically migrate or write tables into `public`.
-3. Pair the Worker URL with its same-project publishable-key secret reference.
+3. Pair the Worker URL with its existing same-project publishable-key secret
+   reference without rotating or exposing the credential.
    Verify `/auth/me`, sign-in callback, and session refresh against that project
    before cutover; preserve `AUTH_REQUIRED=false` until the existing auth gate
    is explicitly approved.
