@@ -13,7 +13,7 @@ services:
       DB_DSN: ${DB_DSN:?DB_DSN must target open-platform with search_path=open_box}
       DB_TABLE_PREFIX: x_
     container_name: open-box
-    image: 'hillstreet/open-box:latest'
+    image: 'hillstreet/open-box@sha256:d43cd28fe3decbf948a784abb9ffd6ad1699ea81e4fd3d9a57fe0f13b737ac1c'
 
 volumes:
   open-box-data:
