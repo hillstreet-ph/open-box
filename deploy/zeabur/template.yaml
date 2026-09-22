@@ -29,7 +29,7 @@ spec:
       domainKey: PUBLIC_DOMAIN
       spec:
         source:
-          image: hillstreet/open-box@sha256:d43cd28fe3decbf948a784abb9ffd6ad1699ea81e4fd3d9a57fe0f13b737ac1c
+          image: hillstreet/open-box@sha256:3dec2e8a5c081fc19a7e28d1fba8416e126cd6ef4f027710d5178d23c0f6d06a
         ports:
           - id: web
             port: 5244
