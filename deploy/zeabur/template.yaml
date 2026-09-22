@@ -29,7 +29,7 @@ spec:
       domainKey: PUBLIC_DOMAIN
       spec:
         source:
-          image: openclose8/open-box:latest
+          image: hillstreet/open-box:latest
         ports:
           - id: web
             port: 5244
