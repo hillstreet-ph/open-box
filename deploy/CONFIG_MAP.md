@@ -12,20 +12,20 @@ Never commit secret values. Store secrets only in provider secret managers.
 
 | Kind | Name | Purpose |
 |------|------|---------|
-| Actions secret | `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Publish `openclose8/open-box` |
+| Actions secret | `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Publish `hillstreet/open-box` |
 | Actions secret | `ZEABUR_API_TOKEN` | Optional deploy automation |
 | Actions secret | `SUPABASE_*` | Project ref, access token, DB URL, JWT, service role |
 | Actions secret | `OAUTH_GITHUB_*` | GitHub OAuth app for Supabase Auth |
 | Actions secret | `CLOUDFLARE_*` | Edge/DNS automation |
-| Actions secret | `RAILWAY_TOKEN` | Legacy — do not use for open-box production |
 | Public config | `deploy/*`, `.env.example` | Non-secret contracts only |
 
 ## Docker Hub
 
 | Resource | Value |
 |----------|-------|
-| Image | `openclose8/open-box` |
-| Production pin | Digest on Zeabur (immutable) |
+| Image | `hillstreet/open-box` |
+| Production pin | `sha256:3dec2e8a5c081fc19a7e28d1fba8416e126cd6ef4f027710d5178d23c0f6d06a` (immutable) |
+| Rollback pin | `sha256:d43cd28fe3decbf948a784abb9ffd6ad1699ea81e4fd3d9a57fe0f13b737ac1c` |
 
 ## Cloudflare
 
