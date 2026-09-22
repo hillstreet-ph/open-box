@@ -30,7 +30,11 @@ jobs:
           set -euo pipefail
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           FILE="openbox-db-${STAMP}.sql.gz"
-          pg_dump "$SUPABASE_DB_URL" --no-owner --no-acl | gzip -9 > "$FILE"
+          pg_dump "$SUPABASE_DB_URL" \
+            --schema=open_box \
+            --no-owner \
+            --no-acl \
+            | gzip -9 > "$FILE"
           test -s "$FILE"
           gzip -t "$FILE"
           CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)

@@ -9,18 +9,10 @@ spec:
       type: DOMAIN
       name: Public domain
       description: Domain that Zeabur should bind to Open-Box.
-    - key: DB_HOST
+    - key: DB_DSN
       type: STRING
-      name: Supabase database host
-      description: Use the IPv4 session-pooler host for the Supabase project.
-    - key: DB_USER
-      type: STRING
-      name: Supabase database user
-      description: Session-pooler database username.
-    - key: DB_PASS
-      type: STRING
-      name: Supabase database password
-      description: Enter this only in Zeabur; never commit it.
+      name: Scoped Supabase database DSN
+      description: Enter the secret-store DSN for open-platform with sslmode=require and search_path=open_box; never commit it.
   tags:
     - Tool
     - Storage
@@ -28,15 +20,16 @@ spec:
     # Open-Box
 
     This template deploys the stateful Open-Box service. It persists runtime data at
-    `/opt/openlist/data` and connects directly to Supabase Postgres. Do not attach a
-    second empty database or reuse the production database for a staging instance.
+    `/opt/openlist/data` and connects directly to the `open_box` schema in Supabase
+    Postgres. Do not attach a second empty database or reuse the production database
+    for a staging instance. Verify `current_schema()` returns `open_box` before startup.
   services:
     - name: Open-Box
       template: PREBUILT
       domainKey: PUBLIC_DOMAIN
       spec:
         source:
-          image: openclose8/open-box:latest
+          image: hillstreet/open-box@sha256:d43cd28fe3decbf948a784abb9ffd6ad1699ea81e4fd3d9a57fe0f13b737ac1c
         ports:
           - id: web
             port: 5244
@@ -55,15 +48,7 @@ spec:
             default: "022"
           DB_TYPE:
             default: postgres
-          DB_HOST:
-            default: ${DB_HOST}
-          DB_PORT:
-            default: "5432"
-          DB_USER:
-            default: ${DB_USER}
-          DB_PASS:
-            default: ${DB_PASS}
-          DB_NAME:
-            default: postgres
-          DB_SSL_MODE:
-            default: require
+          DB_DSN:
+            default: ${DB_DSN}
+          DB_TABLE_PREFIX:
+            default: x_

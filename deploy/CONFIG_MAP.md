@@ -35,16 +35,16 @@ Never commit secret values. Store secrets only in provider secret managers.
 | DNS CNAME apex | → `open-box-space.zeabur.app` (proxied) |
 | Worker `open-box-gateway` | Front door + `/auth/*` |
 | Worker binding `ORIGIN_URL` | Zeabur origin |
-| Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway |
+| Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway; both must belong to `huadtiuuoiriqrjpjxhr`; bind the existing matching key reference without rotating it |
 | Worker binding `AUTH_REQUIRED` | `false` until forced auth desired |
 | R2 `open-box-files` / `open-box-backups` | Object storage |
 
-## Supabase project `open-box` (`ymhiwerqyegvondndkjn`)
+## Supabase project `open-platform` (`huadtiuuoiriqrjpjxhr`)
 
 | Resource | Purpose |
 |----------|---------|
-| Postgres | OpenList `x_*` + `openbox_*` |
-| Session pooler `:5432` | Zeabur runtime DB |
+| Postgres | Schema `open_box`: OpenList `x_*` + `openbox_*` |
+| Session pooler | Provider-verified host/role; secret `DB_DSN` with `sslmode=require` and `search_path=open_box` |
 | Auth + GitHub provider | Worker OAuth |
 | Storage buckets | `open-box-files`, `open-box-backups` |
 | Edge Function | `open-box-status` (JWT required) |
@@ -58,8 +58,12 @@ Never commit secret values. Store secrets only in provider secret managers.
 | Domain | `open-box-space.zeabur.app` |
 | Volume `open-box-data` | `/opt/openlist/data` |
 | Health | HTTP `/` on port `web` |
-| Env public | `PORT`, `SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_SSL_MODE`, `DB_TABLE_PREFIX` |
-| Env secret | `DB_PASS`, `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
+| Env public | `PORT`, `SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`, `DB_TABLE_PREFIX` |
+| Env secret | `DB_DSN` (scoped to `open_box`), `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
+
+The retired project `ymhiwerqyegvondndkjn` is not a runtime target. See
+[the production deployment gate](PRODUCTION.md#deployment-gate) for schema,
+matching-key, backup/restore, and rollback requirements before any cutover.
 
 ## Auth surfaces
 
