@@ -19,6 +19,25 @@ jobs:
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
           test -n "$SUPABASE_PROJECT_REF" || { echo "::error::SUPABASE_PROJECT_REF is required"; exit 1; }
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::SUPABASE_SERVICE_ROLE_KEY is required"; exit 1; }
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          canonical_ref = "huadtiuuoiriqrjpjxhr"
+          project_ref = os.environ["SUPABASE_PROJECT_REF"].strip()
+          dsn = os.environ["SUPABASE_DB_URL"].strip()
+          parsed = urlparse(dsn)
+
+          if project_ref != canonical_ref:
+              raise SystemExit("::error::SUPABASE_PROJECT_REF is not the canonical Open-Box project")
+          if parsed.scheme not in {"postgres", "postgresql"}:
+              raise SystemExit("::error::SUPABASE_DB_URL must be a PostgreSQL connection URI")
+          if not parsed.hostname or not parsed.path.lstrip("/"):
+              raise SystemExit("::error::SUPABASE_DB_URL must include a remote host and database")
+          if canonical_ref not in f"{parsed.hostname} {parsed.username or ''}":
+              raise SystemExit("::error::SUPABASE_DB_URL is not bound to the canonical Open-Box project")
+          print("Supabase backup connection reference validated")
+          PY
 
       - name: Install pg_dump
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
