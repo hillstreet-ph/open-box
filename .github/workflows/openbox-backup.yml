@@ -26,19 +26,23 @@ jobs:
           canonical_ref = "huadtiuuoiriqrjpjxhr"
           project_ref = os.environ["SUPABASE_PROJECT_REF"].strip()
           dsn = os.environ["SUPABASE_DB_URL"].strip()
+          if dsn.count("@") != 1:
+              raise SystemExit("::error::SUPABASE_DB_URL contains ambiguous connection authority")
+          if "#" in dsn:
+              raise SystemExit("::error::SUPABASE_DB_URL must not contain a fragment delimiter")
           parsed = urlparse(dsn)
           username = unquote(parsed.username or "")
-          database = parsed.path.lstrip("/")
+          database_path = parsed.path
 
           if project_ref != canonical_ref:
               raise SystemExit("::error::SUPABASE_PROJECT_REF is not the canonical Open-Box project")
           if parsed.scheme not in {"postgres", "postgresql"}:
               raise SystemExit("::error::SUPABASE_DB_URL must be a PostgreSQL connection URI")
-          if not parsed.hostname or not database:
+          if not parsed.hostname or not database_path:
               raise SystemExit("::error::SUPABASE_DB_URL must include a remote host and database")
           if parsed.query or parsed.params or parsed.fragment:
               raise SystemExit("::error::SUPABASE_DB_URL must not contain target-overriding URI parameters")
-          if database != "postgres":
+          if database_path != "/postgres":
               raise SystemExit("::error::SUPABASE_DB_URL must target the canonical postgres database")
 
           direct_host = f"db.{canonical_ref}.supabase.co"
