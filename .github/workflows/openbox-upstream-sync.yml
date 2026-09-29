@@ -38,19 +38,75 @@ jobs:
           set -euo pipefail
           DATE=$(date -u +%Y%m%d)
           if [ -n "${UPSTREAM_REF}" ]; then
-            REF="$UPSTREAM_REF"
+            git check-ref-format --branch "$UPSTREAM_REF" >/dev/null
+            if git show-ref --verify --quiet "refs/remotes/upstream/$UPSTREAM_REF"; then
+              REF=$(git rev-parse "refs/remotes/upstream/$UPSTREAM_REF^{commit}")
+            elif git show-ref --verify --quiet "refs/tags/$UPSTREAM_REF"; then
+              REF=$(git rev-parse "refs/tags/$UPSTREAM_REF^{commit}")
+            else
+              echo "::error::Requested upstream branch or tag does not exist"
+              exit 1
+            fi
           else
             REF=$(git rev-parse upstream/main 2>/dev/null || git rev-parse upstream/master)
           fi
           SHORT=$(echo "$REF" | cut -c1-7)
           BRANCH="upstream-sync/${DATE}-${SHORT}"
-          git checkout -B "$BRANCH" origin/staging 2>/dev/null || git checkout -B "$BRANCH" origin/main
-          if git merge "$REF" --no-edit; then
-            STATUS="clean"
-          else
-            STATUS="conflicts"
-            git add -A
-            git commit -m "chore(sync): upstream merge requires conflict resolution" || true
+          BASE=origin/staging
+          if ! git show-ref --verify --quiet refs/remotes/origin/staging; then
+            echo "::error::Required staging branch is missing; synchronization stopped before merge or push"
+            exit 1
+          fi
+          git checkout -B "$BRANCH" "$BASE"
+          MERGE_LOG=$(mktemp)
+          if ! git merge "$REF" --no-edit >"$MERGE_LOG" 2>&1; then
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            git merge --abort || git reset --hard "$BASE"
+            {
+              echo "### Upstream synchronization blocked"
+              echo
+              if [ -n "$CONFLICTS" ]; then
+                echo "Merge conflicts must be reconciled deliberately; no branch or PR was pushed."
+                echo
+                echo "**Conflicted paths:**"
+                echo '```text'
+                printf '%s\n' "$CONFLICTS"
+                echo '```'
+              else
+                echo "The merge failed before Git created an unresolved conflict set."
+                echo "Inspect the step log for the underlying Git error; no branch or PR was pushed."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat "$MERGE_LOG"
+            echo "::error::Upstream merge failed; repository state restored before commit or push"
+            exit 1
+          fi
+          WORKFLOW_CHANGES=$(git diff --name-only "$BASE"...HEAD -- .github/workflows)
+          if [ -n "$WORKFLOW_CHANGES" ]; then
+            git reset --hard "$BASE"
+            {
+              echo "### Upstream synchronization blocked"
+              echo
+              echo "The upstream merge changes GitHub Actions workflows, which the current token cannot push."
+              echo "No branch or PR was pushed and repository permissions were not broadened."
+              echo
+              echo "**Upstream ref:** \`${REF}\`"
+              echo "**Workflow paths:**"
+              echo '```text'
+              printf '%s\n' "$WORKFLOW_CHANGES"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Upstream merge changes workflow files; manual reviewed reconciliation required"
+            exit 1
+          fi
+          if git diff --quiet "$BASE"...HEAD; then
+            {
+              echo "### Upstream synchronization current"
+              echo
+              echo "The staging branch already contains upstream commit \`${REF}\`."
+              echo "No branch push or pull request is required."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           if grep -nE '^\s*VOLUME\s' Dockerfile 2>/dev/null; then
             echo "BLOCKER: VOLUME reintroduced in Dockerfile"
@@ -61,7 +117,7 @@ jobs:
           cat > "$BODY_FILE" << BODY
           ## Open-Box upstream synchronization
 
-          **Status:** ${STATUS}
+          **Status:** clean
           **Upstream ref:** \`${REF}\`
           **Target base:** \`staging\` (never main)
 
@@ -73,7 +129,12 @@ jobs:
 
           After staging validation, open a separate PR: staging to main.
           BODY
-          gh pr create --base staging --head "$BRANCH" \
-            --title "chore(sync): upstream ${REF} (${STATUS})" \
-            --body-file "$BODY_FILE" \
-            --draft || echo "PR may already exist"
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --base staging --state open --json url --jq '.[0].url')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Open pull request already exists: $EXISTING_PR"
+          else
+            gh pr create --base staging --head "$BRANCH" \
+              --title "chore(sync): upstream ${REF} (clean)" \
+              --body-file "$BODY_FILE" \
+              --draft
+          fi
