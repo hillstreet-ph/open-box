@@ -99,6 +99,15 @@ jobs:
             echo "::error::Upstream merge changes workflow files; manual reviewed reconciliation required"
             exit 1
           fi
+          if git diff --quiet "$BASE"...HEAD; then
+            {
+              echo "### Upstream synchronization current"
+              echo
+              echo "The staging branch already contains upstream commit \`${REF}\`."
+              echo "No branch push or pull request is required."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if grep -nE '^\s*VOLUME\s' Dockerfile 2>/dev/null; then
             echo "BLOCKER: VOLUME reintroduced in Dockerfile"
             exit 1
@@ -120,8 +129,9 @@ jobs:
 
           After staging validation, open a separate PR: staging to main.
           BODY
-          if gh pr view "$BRANCH" --json url >/dev/null 2>&1; then
-            echo "Pull request already exists for $BRANCH"
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --base staging --state open --json url --jq '.[0].url')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Open pull request already exists: $EXISTING_PR"
           else
             gh pr create --base staging --head "$BRANCH" \
               --title "chore(sync): upstream ${REF} (clean)" \
