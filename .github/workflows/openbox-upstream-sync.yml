@@ -38,34 +38,47 @@ jobs:
           set -euo pipefail
           DATE=$(date -u +%Y%m%d)
           if [ -n "${UPSTREAM_REF}" ]; then
-            REF="$UPSTREAM_REF"
+            git check-ref-format --branch "$UPSTREAM_REF" >/dev/null
+            if git show-ref --verify --quiet "refs/remotes/upstream/$UPSTREAM_REF"; then
+              REF=$(git rev-parse "refs/remotes/upstream/$UPSTREAM_REF^{commit}")
+            elif git show-ref --verify --quiet "refs/tags/$UPSTREAM_REF"; then
+              REF=$(git rev-parse "refs/tags/$UPSTREAM_REF^{commit}")
+            else
+              echo "::error::Requested upstream branch or tag does not exist"
+              exit 1
+            fi
           else
             REF=$(git rev-parse upstream/main 2>/dev/null || git rev-parse upstream/master)
           fi
           SHORT=$(echo "$REF" | cut -c1-7)
           BRANCH="upstream-sync/${DATE}-${SHORT}"
-          if git show-ref --verify --quiet refs/remotes/origin/staging; then
-            BASE=origin/staging
-          else
-            BASE=origin/main
+          BASE=origin/staging
+          if ! git show-ref --verify --quiet refs/remotes/origin/staging; then
+            echo "::error::Required staging branch is missing; synchronization stopped before merge or push"
+            exit 1
           fi
           git checkout -B "$BRANCH" "$BASE"
-          if ! git merge "$REF" --no-edit; then
+          MERGE_LOG=$(mktemp)
+          if ! git merge "$REF" --no-edit >"$MERGE_LOG" 2>&1; then
             CONFLICTS=$(git diff --name-only --diff-filter=U)
             git merge --abort || git reset --hard "$BASE"
             {
               echo "### Upstream synchronization blocked"
               echo
-              echo "Merge conflicts must be reconciled deliberately; no branch or PR was pushed."
-              echo
-              echo "**Upstream ref:** \`${REF}\`"
-              echo "**Target base:** \`${BASE}\`"
-              echo "**Conflicted paths:**"
-              echo '```text'
-              printf '%s\n' "$CONFLICTS"
-              echo '```'
+              if [ -n "$CONFLICTS" ]; then
+                echo "Merge conflicts must be reconciled deliberately; no branch or PR was pushed."
+                echo
+                echo "**Conflicted paths:**"
+                echo '```text'
+                printf '%s\n' "$CONFLICTS"
+                echo '```'
+              else
+                echo "The merge failed before Git created an unresolved conflict set."
+                echo "Inspect the step log for the underlying Git error; no branch or PR was pushed."
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::Upstream merge has conflicts; merge aborted before commit or push"
+            cat "$MERGE_LOG"
+            echo "::error::Upstream merge failed; repository state restored before commit or push"
             exit 1
           fi
           WORKFLOW_CHANGES=$(git diff --name-only "$BASE"...HEAD -- .github/workflows)
@@ -107,7 +120,11 @@ jobs:
 
           After staging validation, open a separate PR: staging to main.
           BODY
-          gh pr create --base staging --head "$BRANCH" \
-            --title "chore(sync): upstream ${REF} (clean)" \
-            --body-file "$BODY_FILE" \
-            --draft || echo "PR may already exist"
+          if gh pr view "$BRANCH" --json url >/dev/null 2>&1; then
+            echo "Pull request already exists for $BRANCH"
+          else
+            gh pr create --base staging --head "$BRANCH" \
+              --title "chore(sync): upstream ${REF} (clean)" \
+              --body-file "$BODY_FILE" \
+              --draft
+          fi
