@@ -82,3 +82,54 @@ test("storage onboarding routes are served at the edge", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("OAuth consent route validates requests and returns a no-store consent page", async () => {
+  const env = {
+    APP_NAME: "Open-Box",
+    ORIGIN_URL: "https://origin.example",
+    SUPABASE_URL: "https://project.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+  };
+  const invalid = await worker.fetch(new Request("https://open-box.space/oauth/consent?authorization_id=bad%20id"), env);
+  assert.equal(invalid.status, 400);
+
+  const response = await worker.fetch(new Request("https://open-box.space/oauth/consent?authorization_id=auth_123"), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.match(response.headers.get("content-security-policy"), /https:\/\/project\.supabase\.co/);
+  const html = await response.text();
+  assert.match(html, /Review access request/);
+  assert.match(html, /getAuthorizationDetails/);
+  assert.match(html, /approveAuthorization/);
+  assert.match(html, /denyAuthorization/);
+});
+
+test("MCP requests bypass the browser cookie gate and preserve the backend OAuth challenge", async () => {
+  const originalFetch = globalThis.fetch;
+  let forwarded;
+  globalThis.fetch = async (input, init) => {
+    forwarded = { url: typeof input === "string" ? input : input.url, headers: new Headers(init?.headers || input.headers) };
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { "content-type": "application/json", "www-authenticate": 'Bearer resource_metadata="https://open-box.space/.well-known/oauth-protected-resource/mcp"' },
+    });
+  };
+  try {
+    const response = await worker.fetch(new Request("https://open-box.space/mcp", {
+      method: "GET",
+      headers: { authorization: "Bearer test-token" },
+    }), {
+      ORIGIN_URL: "https://origin.example",
+      SUPABASE_URL: "https://project.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+      AUTH_REQUIRED: "true",
+    });
+    assert.equal(forwarded.url, "https://origin.example/mcp");
+    assert.equal(forwarded.headers.get("authorization"), "Bearer test-token");
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get("www-authenticate"), /oauth-protected-resource/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
