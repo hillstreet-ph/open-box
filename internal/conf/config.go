@@ -107,7 +107,9 @@ type SFTP struct {
 }
 
 type MCP struct {
-	Enable bool `json:"enable" env:"ENABLE"`
+	Enable        bool   `json:"enable" env:"ENABLE"`
+	OAuthIssuer   string `json:"oauth_issuer" env:"OAUTH_ISSUER"`
+	OAuthAudience string `json:"oauth_audience" env:"OAUTH_AUDIENCE"`
 }
 
 type Config struct {
@@ -250,7 +252,8 @@ func DefaultConfig(dataDir string) *Config {
 			Listen: ":5222",
 		},
 		MCP: MCP{
-			Enable: false,
+			Enable:        false,
+			OAuthAudience: "authenticated",
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",
