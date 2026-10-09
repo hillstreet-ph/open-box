@@ -251,6 +251,71 @@ if(!r.ok){document.body.textContent='Unable to create a secure session';return} 
   });
 }
 
+function oauthConsentPage(request, env, url) {
+  if (request.method !== "GET") {
+    return json({ error: "method_not_allowed" }, 405, { allow: "GET" });
+  }
+  let supabaseOrigin;
+  try {
+    supabaseOrigin = new URL(env.SUPABASE_URL).origin;
+  } catch {
+    return json({ error: "invalid_supabase_url" }, 503);
+  }
+  const authorizationId = url.searchParams.get("authorization_id") || "";
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(authorizationId)) {
+    return json({ error: "invalid_authorization_request" }, 400);
+  }
+  const script = [
+    'import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.3";',
+    'const supabase = createClient(' + JSON.stringify(env.SUPABASE_URL) + ',' + JSON.stringify(env.SUPABASE_PUBLISHABLE_KEY) + ',{auth:{flowType:"pkce",persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});',
+    'const authorizationId = ' + JSON.stringify(authorizationId) + ';',
+    'const status = document.getElementById("status");',
+    'const details = document.getElementById("details");',
+    'const login = document.getElementById("login");',
+    'const approve = document.getElementById("approve");',
+    'const deny = document.getElementById("deny");',
+    'const redirect = (value) => { const target = new URL(value); if (target.protocol !== "https:") throw new Error("Unsafe OAuth redirect"); location.replace(target.href); };',
+    'async function loadRequest() {',
+    '  const sessionResult = await supabase.auth.getSession();',
+    '  if (!sessionResult.data.session) { status.textContent = "Sign in to Supabase to review this request."; login.hidden = false; return; }',
+    '  const result = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);',
+    '  if (result.error) throw result.error;',
+    '  const authorization = result.data || {};',
+    '  if (!("authorization_id" in authorization)) { redirect(authorization.redirect_url); return; }',
+    '  const request = authorization.authorization || authorization;',
+    '  const client = request.oauth_client || request.client || {};',
+    '  document.getElementById("client").textContent = client.client_name || client.name || request.client_name || "Connected AI app";',
+    '  document.getElementById("scopes").textContent = request.scope || request.scopes || "No scopes listed";',
+    '  document.getElementById("redirect-uri").textContent = request.redirect_uri || client.redirect_uri || "Verified by Supabase Auth";',
+    '  details.hidden = false; status.textContent = "Review the app and requested access before approving."; login.hidden = true;',
+    '}',
+    'login.addEventListener("click", async () => { status.textContent = "Redirecting to sign in…"; const result = await supabase.auth.signInWithOAuth({provider:"github",options:{redirectTo:location.href}}); if (result.error) status.textContent = result.error.message; });',
+    'approve.addEventListener("click", async () => { approve.disabled = true; const result = await supabase.auth.oauth.approveAuthorization(authorizationId,{skipBrowserRedirect:true}); if (result.error) { status.textContent = result.error.message; approve.disabled = false; return; } try { redirect(result.data?.redirect_url || result.redirect_url); } catch (error) { status.textContent = error.message; approve.disabled = false; } });',
+    'deny.addEventListener("click", async () => { deny.disabled = true; const result = await supabase.auth.oauth.denyAuthorization(authorizationId,{skipBrowserRedirect:true}); if (result.error) { status.textContent = result.error.message; deny.disabled = false; return; } try { redirect(result.data?.redirect_url || result.redirect_url); } catch (error) { status.textContent = error.message; deny.disabled = false; } });',
+    'loadRequest().catch(() => { status.textContent = "Unable to load the authorization request. Return to ChatGPT and try again."; });'
+  ].join("\n");
+  const html = [
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<title>Connect ChatGPT · Open-Box</title>',
+    '<style>body{font:16px/1.5 system-ui,sans-serif;background:#09090b;color:#fafafa;margin:0}main{max-width:640px;margin:10vh auto;padding:28px;background:#18181b;border:1px solid #3f3f46;border-radius:18px}p,dt{color:#a1a1aa}dl div{display:grid;grid-template-columns:130px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid #27272a}dd{margin:0;overflow-wrap:anywhere}button{margin:14px 8px 0 0;padding:12px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:700}button.secondary{background:#27272a}button:disabled{opacity:.5}</style>',
+    '</head><body><main><p>OPEN-BOX · SECURE CONNECTION</p><h1>Review access request</h1>',
+    '<p id="status" role="status">Checking your sign-in…</p>',
+    '<section id="details" hidden><dl><div><dt>App</dt><dd id="client"></dd></div><div><dt>Requested access</dt><dd id="scopes"></dd></div><div><dt>Callback</dt><dd id="redirect-uri"></dd></div></dl>',
+    '<p>Approving lets this app use the listed access as your linked Open-Box account. You can revoke the connection in Supabase Auth settings.</p>',
+    '<button id="approve">Allow access</button><button class="secondary" id="deny">Decline</button></section>',
+    '<button id="login" hidden>Sign in with GitHub</button></main><script type="module">' + script + '</script></body></html>'
+  ].join("");
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; script-src 'unsafe-inline' https://esm.sh; connect-src 'self' " + supabaseOrigin + "; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
 async function handleAuth(request, env, url) {
   if (url.pathname === "/auth/login") {
     const next = safeNext(url.searchParams.get("next"));
@@ -377,6 +442,7 @@ export default {
     if (!env.ORIGIN_URL || !env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
       return json({ error: "gateway_not_configured" }, 503);
     }
+    if (url.pathname === "/oauth/consent") return oauthConsentPage(request, env, url);
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
     if (url.pathname === "/open-box-brand.svg" && (request.method === "GET" || request.method === "HEAD")) {
@@ -398,7 +464,8 @@ export default {
     if ((url.pathname === "/connect-storage" || url.pathname === "/settings/integrations") && request.method === "GET") {
       return integrationSettingsPage(env.APP_NAME, await integrationStatus(env));
     }
-    if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping") {
+    const isMcpRoute = url.pathname === "/mcp" || url.pathname.startsWith("/mcp/") || url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp";
+    if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping" && !isMcpRoute) {
       let access = cookieValue(request, ACCESS_COOKIE);
       let user = await getUser(env, access);
       let refreshed = null;
