@@ -127,6 +127,16 @@ function fileSummary(file) {
   };
 }
 
+function failureStatus({ response, payload }) {
+  return !response.ok && response.status >= 400 && response.status <= 599
+    ? response.status
+    : Number.isInteger(payload?.code) &&
+        payload.code >= 400 &&
+        payload.code <= 599
+      ? payload.code
+      : 502;
+}
+
 async function execute(env, authorization, action) {
   const { tool, ...args } = action;
   if (tool === "list")
@@ -138,14 +148,7 @@ async function execute(env, authorization, action) {
     args,
   );
   if (!response.ok || payload?.code !== 200) {
-    const status =
-      !response.ok && response.status >= 400 && response.status <= 599
-        ? response.status
-        : Number.isInteger(payload?.code) &&
-            payload.code >= 400 &&
-            payload.code <= 599
-          ? payload.code
-          : 502;
+    const status = failureStatus({ response, payload });
     return json(
       {
         error: "file_operation_failed",
@@ -202,10 +205,18 @@ export async function handleAssistant(request, env) {
     return json({ error: "sign_in_required" }, 401);
   try {
     const me = await backend(env, authorization, "/api/me");
+    if (!me.response.ok || me.payload?.code !== 200) {
+      const status = failureStatus(me);
+      return json(
+        {
+          error: status === 401 ? "sign_in_required" : "identity_check_failed",
+          code: status,
+        },
+        status,
+      );
+    }
     const user = me.payload?.data;
     if (
-      !me.response.ok ||
-      me.payload?.code !== 200 ||
       !Number.isInteger(user?.id) ||
       user.id < 1 ||
       ![0, 2].includes(user.role) ||

@@ -156,6 +156,42 @@ test("assistant rejects expired, guest, disabled and malformed identities", asyn
   }
 });
 
+test("identity outages and rate limits remain actionable without sign-in prompts", async (t) => {
+  for (const status of [401, 403, 404, 429, 500, 503]) {
+    for (const envelope of [true, false]) {
+      let calls = 0;
+      stub(t, async () => {
+        calls++;
+        return Response.json(
+          {
+            code: envelope ? status : 200,
+            message: "private-provider-detail",
+            token: "must-not-return",
+          },
+          { status: envelope ? 200 : status },
+        );
+      });
+      const response = await handleAssistant(
+        request("chat", { prompt: "List /Workspace" }),
+        env,
+      );
+      assert.equal(response.status, status);
+      assert.equal(calls, 1);
+      const body = await response.json();
+      assert.equal(
+        body.error,
+        status === 401 ? "sign_in_required" : "identity_check_failed",
+      );
+      assert.doesNotMatch(
+        JSON.stringify(body),
+        /private-provider-detail|must-not-return|test-user-session/,
+      );
+    }
+  }
+  stub(t, async () => Response.json({ unexpected: true }));
+  assert.equal((await handleAssistant(request("session"), env)).status, 502);
+});
+
 test("assistant session returns capabilities without secret identity fields", async (t) => {
   stub(t, async () =>
     me({ password: "must-not-return", sso_id: "private-link" }),
