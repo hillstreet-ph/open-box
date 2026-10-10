@@ -14,5 +14,7 @@ func MCP(g *gin.RouterGroup) {
 		})
 		return
 	}
+	g.GET("/.well-known/oauth-protected-resource", mcp.ProtectedResourceMetadata)
+	g.GET("/.well-known/oauth-protected-resource/mcp", mcp.ProtectedResourceMetadata)
 	mcp.Register(g)
 }

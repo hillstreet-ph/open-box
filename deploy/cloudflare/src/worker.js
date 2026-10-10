@@ -218,7 +218,7 @@ export async function integrationStatus(env) {
     { id: "docker", name: "Docker Delivery", state: "configured", detail: "GitHub Actions image build and release" },
   ];
   return {
-    status: services.some(({ state }) => state === "degraded") ? "degraded" : "operational",
+    status: services.some(({ state }) => state === "degraded") ? "degraded" : services.some(({ state }) => state === "action_required") ? "action_required" : "operational",
     checkedAt: new Date().toISOString(),
     application: openList,
     services,
@@ -244,7 +244,7 @@ function integrationSettingsPage(appName, status) {
       <div class="row"><h2>${provider.name}</h2><span>Connect later</span></div>
       <p>${kind} · Multiple accounts supported</p>
       <div class="chips">${services}</div>
-      <dl><div><dt>Account types</dt><dd>${accountTypes}</dd></div><div><dt>Driver</dt><dd>${provider.driver}</dd></div><div><dt>Mount</dt><dd><code>${provider.mount}</code></dd></div></dl>
+      <dl><div><dt>Account types</dt><dd>${accountTypes}</dd></div><div><dt>Driver</dt><dd>${provider.driver}</dd></div><div><dt>Mount</dt><dd><code>${provider.mount.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</code></dd></div></dl>
       ${provider.note ? `<p class="note">${provider.note}</p>` : ""}
       <a class="secondary" href="${provider.authorizationUrl}" target="_blank" rel="noreferrer">Open authorization guide</a>
     </article>`;
@@ -255,13 +255,13 @@ function integrationSettingsPage(appName, status) {
 <style>
 :root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:64px 24px}header{max-width:780px;margin-bottom:32px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1{font-size:clamp(2rem,6vw,4rem);line-height:1.05;margin:.25em 0}h2{margin-top:38px}header p,.card p,.service p{color:var(--muted)}.notice{border:1px solid #166534;background:#052e16;padding:14px 16px;border-radius:14px;margin:24px 0}.notice strong{color:#86efac}.services,.grid{display:grid;gap:16px}.services{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card,.service{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px}.service{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.service h3,.service p{margin:0}.service p{margin-top:4px;font-size:.88rem}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.row h2{margin:0}.badge,.row>span,.chip{white-space:nowrap;border-radius:999px;padding:4px 9px;font-size:.76rem;font-weight:700}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.chip{color:#ddd6fe;background:#2e1065;border:1px solid #6d28d9}.note{font-size:.87rem}.operational{color:#86efac;background:#052e16;border:1px solid #166534}.configured{color:#bfdbfe;background:#172554;border:1px solid #1d4ed8}.degraded,.action_required,.row>span{color:#fde68a;background:#422006;border:1px solid #854d0e}dl{margin:18px 0}dl div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid #27272a}dt{color:var(--muted)}dd{margin:0;text-align:right}code{color:#ddd6fe}.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0}a{display:inline-block;color:white;text-decoration:none;border-radius:10px;padding:11px 15px;font-weight:700}.primary{background:var(--brand)}.secondary{border:1px solid var(--line);padding:8px 11px;font-size:.9rem}.steps{color:var(--muted);padding-left:20px}.steps strong{color:var(--text)}footer{color:var(--muted);margin-top:36px;font-size:.9rem}@media(max-width:820px){.services{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){main{padding:36px 18px}.grid,.services{grid-template-columns:1fr}.row{align-items:flex-start}dd{max-width:58%}}
 </style></head><body><main>
-<header><div class="eyebrow">${escapedName} settings</div><h1>Your clouds. One Open‑Box.</h1><p>Connect multiple personal and workspace accounts without mixing their identities. Every source keeps a unique mount and is collected read-only into master storage.</p></header>
-<div class="notice"><strong>System ${status.status}.</strong> Last checked ${status.checkedAt.replace(/[TZ]/g, " ").slice(0, 19)} UTC. Cloudflare R2, Supabase S3, and the persistent application volume remain active.</div>
+<header><div class="eyebrow">${escapedName} settings</div><h1>Your clouds. One Open‑Box.</h1><p>Connect multiple personal and workspace accounts without mixing their identities. Use a unique mount for every source account. Enable collection after listing and read access have been verified.</p></header>
+<div class="notice"><strong>System ${status.status.replaceAll("_", " ")}.</strong> Last checked ${status.checkedAt.replace(/[TZ]/g, " ").slice(0, 19)} UTC. Storage accounts, filesystem mounts, backups, and the persistent application volume require separate verification.</div>
 <h2>Core services</h2><section class="services">${services}</section>
 <h2>Storage account connections</h2>
 <section class="grid">${cards}</section>
 <div class="actions"><a class="primary" href="/@manage">Open administrator settings</a><a class="secondary" href="/api/open-box/integrations/status">View status API</a><a class="secondary" href="/">Return to files</a></div>
-<ol class="steps"><li>Sign in with the configured GitHub SSO administrator.</li><li>Authorize one provider account at a time.</li><li>Give every account a unique slug, such as <strong>personal-01</strong> or <strong>workspace-01</strong>.</li><li>Choose only the services and read-only scopes that account needs.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
+<ol class="steps"><li>Sign in to the administrator account; enable GitHub SSO only after its configuration is verified.</li><li>Authorize one provider account at a time.</li><li>Give every account a unique slug, such as <strong>personal-01</strong> or <strong>workspace-01</strong>.</li><li>Choose only the services and read-only scopes that account needs.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
 <footer>No credentials are accepted or retained by this page. OAuth secrets and refresh tokens belong only in the server-side storage configuration.</footer>
 </main></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
 }
@@ -311,6 +311,71 @@ if(!r.ok){document.body.textContent='Unable to create a secure session';return} 
       "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'",
       "referrer-policy": "no-referrer",
     },
+  });
+}
+
+function oauthConsentPage(request, env, url) {
+  if (request.method !== "GET") {
+    return json({ error: "method_not_allowed" }, 405, { allow: "GET" });
+  }
+  let supabaseOrigin;
+  try {
+    supabaseOrigin = new URL(env.SUPABASE_URL).origin;
+  } catch {
+    return json({ error: "invalid_supabase_url" }, 503);
+  }
+  const authorizationId = url.searchParams.get("authorization_id") || "";
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(authorizationId)) {
+    return json({ error: "invalid_authorization_request" }, 400);
+  }
+  const script = [
+    'import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.3";',
+    'const supabase = createClient(' + JSON.stringify(env.SUPABASE_URL) + ',' + JSON.stringify(env.SUPABASE_PUBLISHABLE_KEY) + ',{auth:{flowType:"pkce",persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});',
+    'const authorizationId = ' + JSON.stringify(authorizationId) + ';',
+    'const status = document.getElementById("status");',
+    'const details = document.getElementById("details");',
+    'const login = document.getElementById("login");',
+    'const approve = document.getElementById("approve");',
+    'const deny = document.getElementById("deny");',
+    'const redirect = (value) => { const target = new URL(value); if (target.protocol !== "https:") throw new Error("Unsafe OAuth redirect"); location.replace(target.href); };',
+    'async function loadRequest() {',
+    '  const sessionResult = await supabase.auth.getSession();',
+    '  if (!sessionResult.data.session) { status.textContent = "Sign in to Supabase to review this request."; login.hidden = false; return; }',
+    '  const result = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);',
+    '  if (result.error) throw result.error;',
+    '  const authorization = result.data || {};',
+    '  if (!("authorization_id" in authorization)) { redirect(authorization.redirect_url); return; }',
+    '  const request = authorization.authorization || authorization;',
+    '  const client = request.oauth_client || request.client || {};',
+    '  document.getElementById("client").textContent = client.client_name || client.name || request.client_name || "Connected AI app";',
+    '  document.getElementById("scopes").textContent = request.scope || request.scopes || "No scopes listed";',
+    '  document.getElementById("redirect-uri").textContent = request.redirect_uri || client.redirect_uri || "Verified by Supabase Auth";',
+    '  details.hidden = false; status.textContent = "Review the app and requested access before approving."; login.hidden = true;',
+    '}',
+    'login.addEventListener("click", async () => { status.textContent = "Redirecting to sign in…"; const result = await supabase.auth.signInWithOAuth({provider:"github",options:{redirectTo:location.href}}); if (result.error) status.textContent = result.error.message; });',
+    'approve.addEventListener("click", async () => { approve.disabled = true; const result = await supabase.auth.oauth.approveAuthorization(authorizationId,{skipBrowserRedirect:true}); if (result.error) { status.textContent = result.error.message; approve.disabled = false; return; } try { redirect(result.data?.redirect_url || result.redirect_url); } catch (error) { status.textContent = error.message; approve.disabled = false; } });',
+    'deny.addEventListener("click", async () => { deny.disabled = true; const result = await supabase.auth.oauth.denyAuthorization(authorizationId,{skipBrowserRedirect:true}); if (result.error) { status.textContent = result.error.message; deny.disabled = false; return; } try { redirect(result.data?.redirect_url || result.redirect_url); } catch (error) { status.textContent = error.message; deny.disabled = false; } });',
+    'loadRequest().catch(() => { status.textContent = "Unable to load the authorization request. Return to ChatGPT and try again."; });'
+  ].join("\n");
+  const html = [
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<title>Connect ChatGPT · Open-Box</title>',
+    '<style>body{font:16px/1.5 system-ui,sans-serif;background:#09090b;color:#fafafa;margin:0}main{max-width:640px;margin:10vh auto;padding:28px;background:#18181b;border:1px solid #3f3f46;border-radius:18px}p,dt{color:#a1a1aa}dl div{display:grid;grid-template-columns:130px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid #27272a}dd{margin:0;overflow-wrap:anywhere}button{margin:14px 8px 0 0;padding:12px 16px;border:0;border-radius:10px;background:#7c3aed;color:white;font-weight:700}button.secondary{background:#27272a}button:disabled{opacity:.5}</style>',
+    '</head><body><main><p>OPEN-BOX · SECURE CONNECTION</p><h1>Review access request</h1>',
+    '<p id="status" role="status">Checking your sign-in…</p>',
+    '<section id="details" hidden><dl><div><dt>App</dt><dd id="client"></dd></div><div><dt>Requested access</dt><dd id="scopes"></dd></div><div><dt>Callback</dt><dd id="redirect-uri"></dd></div></dl>',
+    '<p>Approving lets this app use the listed access as your linked Open-Box account. You can revoke the connection in Supabase Auth settings.</p>',
+    '<button id="approve">Allow access</button><button class="secondary" id="deny">Decline</button></section>',
+    '<button id="login" hidden>Sign in with GitHub</button></main><script type="module">' + script + '</script></body></html>'
+  ].join("");
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; script-src 'unsafe-inline' https://esm.sh; connect-src 'self' " + supabaseOrigin + "; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff"
+    }
   });
 }
 
@@ -461,6 +526,7 @@ export default {
     if (!env.ORIGIN_URL || !env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
       return json({ error: "gateway_not_configured" }, 503);
     }
+    if (url.pathname === "/oauth/consent") return oauthConsentPage(request, env, url);
     if (url.pathname === "/open-box-about.md" && request.method === "GET") return new Response(OPEN_BOX_ABOUT, {headers:{"content-type":"text/markdown; charset=utf-8","cache-control":"public, max-age=300","x-content-type-options":"nosniff"}});
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
@@ -483,7 +549,8 @@ export default {
     if ((url.pathname === "/connect-storage" || url.pathname === "/settings/integrations") && request.method === "GET") {
       return integrationSettingsPage(env.APP_NAME, await integrationStatus(env));
     }
-    if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping") {
+    const isMcpRoute = url.pathname === "/mcp" || url.pathname.startsWith("/mcp/") || url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp";
+    if (env.AUTH_REQUIRED === "true" && url.pathname !== "/ping" && !isMcpRoute) {
       let access = cookieValue(request, ACCESS_COOKIE);
       let user = await getUser(env, access);
       let refreshed = null;

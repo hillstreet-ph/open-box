@@ -171,3 +171,73 @@ test("non-SPA HTML fallback preserves binary body and validators",async()=>{
   assert.equal(response.headers.get("etag"),"original");
  } finally {globalThis.fetch=original;}
 });
+
+test("OAuth consent route validates requests and returns a no-store consent page", async () => {
+  const env = {
+    APP_NAME: "Open-Box",
+    ORIGIN_URL: "https://origin.example",
+    SUPABASE_URL: "https://project.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+  };
+  const invalid = await worker.fetch(new Request("https://open-box.space/oauth/consent?authorization_id=bad%20id"), env);
+  assert.equal(invalid.status, 400);
+
+  const response = await worker.fetch(new Request("https://open-box.space/oauth/consent?authorization_id=auth_123"), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.match(response.headers.get("content-security-policy"), /https:\/\/project\.supabase\.co/);
+  const html = await response.text();
+  assert.match(html, /Review access request/);
+  assert.match(html, /getAuthorizationDetails/);
+  assert.match(html, /approveAuthorization/);
+  assert.match(html, /denyAuthorization/);
+});
+
+test("MCP requests bypass the browser cookie gate and preserve the backend OAuth challenge", async () => {
+  const originalFetch = globalThis.fetch;
+  let forwarded;
+  globalThis.fetch = async (input, init) => {
+    forwarded = { url: typeof input === "string" ? input : input.url, headers: new Headers(init?.headers || input.headers) };
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401,
+      headers: { "content-type": "application/json", "www-authenticate": 'Bearer resource_metadata="https://open-box.space/.well-known/oauth-protected-resource/mcp"' },
+    });
+  };
+  try {
+    const response = await worker.fetch(new Request("https://open-box.space/mcp", {
+      method: "GET",
+      headers: { authorization: "Bearer test-token" },
+    }), {
+      ORIGIN_URL: "https://origin.example",
+      SUPABASE_URL: "https://project.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "public-test-key",
+      AUTH_REQUIRED: "true",
+    });
+    assert.equal(forwarded.url, "https://origin.example/mcp");
+    assert.equal(forwarded.headers.get("authorization"), "Bearer test-token");
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get("www-authenticate"), /oauth-protected-resource/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
+test("integration page shows incomplete auth and preserves account mount placeholders",async()=>{
+ const original=globalThis.fetch;
+ globalThis.fetch=async input=>{
+  const url=typeof input==="string"?input:input.url;
+  if(url.endsWith("/api/public/settings")) return Response.json({data:{sso_login_enabled:"false"}});
+  return Response.json({status:"ok"});
+ };
+ try {
+  const env={ORIGIN_URL:"https://origin.example",SUPABASE_URL:"https://project.example",SUPABASE_PUBLISHABLE_KEY:"public",AI:{}};
+  assert.equal((await integrationStatus(env)).status,"action_required");
+  const page=await worker.fetch(new Request("https://open-box.space/settings/integrations"),env);
+  const html=await page.text();
+  assert.match(html,/System action required/);
+  assert.match(html,/google-drive\/&lt;account&gt;/);
+  assert.equal(html.includes("persistent application volume remain active"),false);
+ } finally {globalThis.fetch=original;}
+});

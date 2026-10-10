@@ -78,7 +78,14 @@ var supportedProtocolVersions = map[string]struct{}{
 }
 
 func Register(g *gin.RouterGroup) {
-	mcpGroup := g.Group("/mcp", middlewares.Auth(false), middlewares.AuthAdmin)
+	var mcpGroup *gin.RouterGroup
+	if strings.TrimSpace(conf.Conf.MCP.OAuthIssuer) == "" {
+		// Preserve the existing admin-only behavior until OAuth is configured.
+		mcpGroup = g.Group("/mcp", middlewares.Auth(false), middlewares.AuthAdmin)
+	} else {
+		// OAuth mode authorizes each request as the linked Open-Box user.
+		mcpGroup = g.Group("/mcp", AuthMCP)
+	}
 	mcpGroup.GET("", defaultServer.handleGet)
 	mcpGroup.POST("", defaultServer.handlePost)
 	mcpGroup.DELETE("", defaultServer.handleDelete)
