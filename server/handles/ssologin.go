@@ -76,6 +76,14 @@ func SSOLoginRedirect(c *gin.Context) {
 	urlValues.Add("client_id", clientId)
 	switch platform {
 	case "Github":
+		if useCompatibility {
+			common.ErrorStrResp(c, "Disable SSO compatibility mode for protected GitHub sign-in", 400)
+			return
+		}
+		if err := beginGithubSSO(c, clientId, method, redirectUri, urlValues); err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
 		rUrl = "https://github.com/login/oauth/authorize?"
 		urlValues.Add("scope", "read:user")
 	case "Microsoft":
@@ -112,6 +120,7 @@ func SSOLoginRedirect(c *gin.Context) {
 }
 
 var ssoClient = resty.New().SetRetryCount(3)
+var githubSSOClient = resty.New().SetTimeout(10 * time.Second).SetRetryCount(0)
 
 func GetOIDCClient(c *gin.Context, useCompatibility bool, redirectUri, method string) (*oauth2.Config, error) {
 	if redirectUri == "" {
@@ -352,6 +361,20 @@ func SSOLoginCallback(c *gin.Context) {
 		common.ErrorStrResp(c, "No code provided", 400)
 		return
 	}
+	client := ssoClient
+	if platform == "Github" {
+		if usecompatibility {
+			common.ErrorStrResp(c, "Disable SSO compatibility mode for protected GitHub sign-in", 400)
+			return
+		}
+		verifier, err := consumeGithubSSO(c, clientId, argument, ssoRedirectUri(c, false, argument))
+		if err != nil {
+			common.ErrorResp(c, err, 400)
+			return
+		}
+		additionalForm["code_verifier"] = verifier
+		client = githubSSOClient
+	}
 	var resp *resty.Response
 	var err error
 	if platform == "Dingtalk" {
@@ -370,7 +393,7 @@ func SSOLoginCallback(c *gin.Context) {
 		} else {
 			redirect_uri = common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + argument
 		}
-		resp, err = ssoClient.R().SetHeader("Accept", "application/json").
+		resp, err = client.R().SetHeader("Accept", "application/json").
 			SetFormData(map[string]string{
 				"client_id":     clientId,
 				"client_secret": clientSecret,
@@ -389,11 +412,19 @@ func SSOLoginCallback(c *gin.Context) {
 			Get(userUrl)
 	} else {
 		accessToken := utils.Json.Get(resp.Body(), "access_token").ToString()
-		resp, err = ssoClient.R().SetHeader("Authorization", "Bearer "+accessToken).
+		if platform == "Github" && (!resp.IsSuccess() || accessToken == "") {
+			common.ErrorStrResp(c, "GitHub token exchange failed", 400)
+			return
+		}
+		resp, err = client.R().SetHeader("Authorization", "Bearer "+accessToken).
 			Get(userUrl)
 	}
 	if err != nil {
 		common.ErrorResp(c, err, 400)
+		return
+	}
+	if platform == "Github" && !resp.IsSuccess() {
+		common.ErrorStrResp(c, "GitHub account lookup failed", 400)
 		return
 	}
 	userID := utils.Json.Get(resp.Body(), idField).ToString()
@@ -402,6 +433,10 @@ func SSOLoginCallback(c *gin.Context) {
 		return
 	}
 	if argument == "get_sso_id" {
+		if platform == "Github" {
+			githubSSOMessage(c, "sso_id", userID)
+			return
+		}
 		if usecompatibility {
 			c.Redirect(302, common.GetApiUrl(c)+"/@manage?sso_id="+userID)
 			return
@@ -426,9 +461,17 @@ func SSOLoginCallback(c *gin.Context) {
 			return
 		}
 	}
+	if platform == "Github" && (user.Disabled || user.IsGuest()) {
+		common.ErrorStrResp(c, "SSO account is not enabled", 403)
+		return
+	}
 	token, err := common.GenerateToken(user)
 	if err != nil {
 		common.ErrorResp(c, err, 400)
+		return
+	}
+	if platform == "Github" {
+		githubSSOMessage(c, "token", token)
 		return
 	}
 	if usecompatibility {
