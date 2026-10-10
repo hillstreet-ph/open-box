@@ -1,3 +1,58 @@
+// Use the native row styling in every rendered menu, including the mobile drawer.
+export function installManagementNavigation(
+  document,
+  location,
+  fallback,
+  Observer,
+) {
+  const marker = "data-open-box-integrations";
+  function sync() {
+    const rows = [...document.querySelectorAll(`a[${marker}]`)];
+    const menus = new Set();
+    if (/^\/@manage(?:\/|$)/.test(location.pathname)) {
+      for (const storage of document.querySelectorAll(
+        'a[href="/@manage/storages"]',
+      )) {
+        const menu = storage.parentElement;
+        // Avoid inserting into unrelated links outside the native navigation.
+        if (!menu?.querySelector('a[href="/@manage"]')) continue;
+        menus.add(menu);
+        let row = menu.querySelector(`a[${marker}]`);
+        if (!row) {
+          row = storage.cloneNode(true);
+          row.setAttribute(marker, "");
+          row.setAttribute("href", "/settings/integrations");
+          row.removeAttribute("aria-current");
+          row.removeAttribute("id");
+          row.classList.remove("active");
+          row.classList.add("inactive");
+          const label = row.querySelector("h2");
+          if (label) label.textContent = "Integrations";
+          else row.textContent = "Integrations";
+          const icon = row.querySelector("svg");
+          if (icon) {
+            icon.setAttribute("aria-hidden", "true");
+            icon.setAttribute("viewBox", "0 0 24 24");
+            icon.innerHTML =
+              '<path fill="currentColor" d="M7 2h2v4h6V2h2v4h2v6a7 7 0 0 1-6 6.93V22h-2v-3.07A7 7 0 0 1 5 12V6h2V2Zm0 6v4a5 5 0 0 0 10 0V8H7Z"/>';
+          }
+          storage.after(row);
+        }
+      }
+    }
+    for (const row of rows) {
+      if (!menus.has(row.parentElement)) row.remove();
+    }
+    // Retain access while the menu is loading and on file/login pages.
+    const hidden = menus.size > 0;
+    if (fallback.hidden !== hidden) fallback.hidden = hidden;
+  }
+  const observer = new Observer(sync);
+  observer.observe(document.body, { childList: true, subtree: true });
+  sync();
+  return { sync, observer };
+}
+
 export const ASSISTANT_WIDGET = String.raw`(() => {
   if (document.getElementById('open-box-agent-assistant')) return;
   const host = document.createElement('div');
@@ -8,6 +63,9 @@ export const ASSISTANT_WIDGET = String.raw`(() => {
     '</style><section class="panel" role="dialog" aria-modal="false" aria-label="Agent Assistant" hidden><header><div><h2>Agent Assistant</h2><small>Open-Box internal helper</small></div><button type="button" aria-label="Close Agent Assistant">×</button></header><div class="messages" role="log" aria-live="polite"></div><div class="review" hidden><strong>Review file change</strong><pre></pre><button type="button" class="confirm">Execute change</button><button type="button" class="cancel">Cancel</button></div><form><label for="prompt">What would you like to do?</label><textarea id="prompt" maxlength="4000" placeholder="List /Workspace, or create /Workspace/Reports" required></textarea><button type="submit">Send</button><p class="note">Uses your Open-Box permissions. Never enter passwords or tokens.</p></form></section><nav class="dock" aria-label="Open-Box helpers"><button class="launcher" type="button" aria-expanded="false" aria-label="Open Agent Assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-1 2v-9.5a8.5 8.5 0 0 1 17-1Z"/><path d="M7 11h8M7 15h5"/></svg>Agent Assistant</button><a href="/settings/integrations">Integrations</a></nav>';
   document.body.append(host);
   document.querySelectorAll('nav[aria-label="Open-Box integrations"]').forEach(node => node.remove());
+  ${installManagementNavigation.toString()}
+  const navigation = installManagementNavigation(document, location, root.querySelector('.dock a'), MutationObserver);
+  window.addEventListener('popstate', navigation.sync);
   const panel = root.querySelector('.panel');
   const launcher = root.querySelector('.launcher');
   const prompt = root.querySelector('textarea');

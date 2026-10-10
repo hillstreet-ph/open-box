@@ -2,7 +2,7 @@
 
 Exact commands `list /path`, `get /path`, `mkdir /path` and `create /path` preserve the supplied absolute path without model inference. Quote paths containing spaces. The assistant still verifies the native session, validates paths and asks for confirmation before folder creation; planning never writes files. Other phrasing uses Workers AI and remains a proposal to review.
 
-Agent Assistant is an internal file helper in the lower-left dock beside Integrations. It uses Workers AI to propose one validated operation and the current user's Open-Box session to execute it. There is no administrator credential in the widget or AI prompt.
+Agent Assistant is an internal file helper in the lower-left dock. Integrations appears directly below Storages in the management sidebar and any rendered mobile navigation drawer, using the native menu styling. The dock retains an Integrations fallback on file/login pages and while the native menu is loading. Navigation remounts do not create duplicate links. It uses Workers AI to propose one validated operation and the current user's Open-Box session to execute it. There is no administrator credential in the widget or AI prompt.
 
 ## Supported operations
 
