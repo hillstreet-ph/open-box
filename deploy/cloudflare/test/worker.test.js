@@ -222,3 +222,22 @@ test("MCP requests bypass the browser cookie gate and preserve the backend OAuth
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("integration page shows incomplete auth and preserves account mount placeholders",async()=>{
+ const original=globalThis.fetch;
+ globalThis.fetch=async input=>{
+  const url=typeof input==="string"?input:input.url;
+  if(url.endsWith("/api/public/settings")) return Response.json({data:{sso_login_enabled:"false"}});
+  return Response.json({status:"ok"});
+ };
+ try {
+  const env={ORIGIN_URL:"https://origin.example",SUPABASE_URL:"https://project.example",SUPABASE_PUBLISHABLE_KEY:"public",AI:{}};
+  assert.equal((await integrationStatus(env)).status,"action_required");
+  const page=await worker.fetch(new Request("https://open-box.space/settings/integrations"),env);
+  const html=await page.text();
+  assert.match(html,/System action required/);
+  assert.match(html,/google-drive\/&lt;account&gt;/);
+  assert.equal(html.includes("persistent application volume remain active"),false);
+ } finally {globalThis.fetch=original;}
+});
