@@ -197,7 +197,7 @@ export async function handleAssistant(request, env) {
       me.payload?.code !== 200 ||
       !Number.isInteger(user?.id) ||
       user.id < 1 ||
-      ![0, 1].includes(user.role) ||
+      ![0, 2].includes(user.role) ||
       user.disabled
     )
       return json({ error: "sign_in_required" }, 401);
@@ -290,6 +290,7 @@ export async function handleAssistant(request, env) {
     return json(
       {
         error: "assistant_unavailable",
+        error_kind: ["TypeError", "TimeoutError", "AbortError"].includes(error.name) ? error.name : "unavailable",
         message:
           "Agent Assistant is temporarily unavailable. Your request has not been retried.",
       },
