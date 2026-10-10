@@ -11,13 +11,13 @@ Open-Box exposes its existing read-only file tools through the MCP endpoint at `
 
 ## Configure Supabase Auth
 
-In Supabase Dashboard, open **Authentication → URL Configuration** and set the Site URL to `https://open-box.space`. Add the OAuth consent URL to the allowed redirect URLs if it is not already covered:
+The existing shared project `huadtiuuoiriqrjpjxhr` has Site URL `https://open-connect.site`. Preserve that URL and its existing redirects. Before enabling the OAuth server, review consent routing for both applications: a relative authorization path resolves under the shared Site URL and must route authorized Open-Box requests correctly. A dedicated Auth project is another deployment choice, but do not create or migrate one implicitly. Add the Open-Box consent URL only after that routing plan is verified:
 
 ```
 https://open-box.space/oauth/consent
 ```
 
-Then open **Authentication → OAuth Server** and enable the OAuth 2.1 server. Set its authorization path to `/oauth/consent` and enable Dynamic Client Registration so ChatGPT can register its OAuth client. Before rollout, verify the provider discovery metadata advertises refresh-token support (`offline_access` or the provider equivalent) and that authorization grants issue refresh tokens, as ChatGPT needs refresh support for long-lived connections. Use asymmetric signing keys for new projects; review key migration guidance before changing signing keys on a project with existing sessions.
+After staging and verifying the shared consent routing plan, configure **Authentication → OAuth Server** with its reviewed authorization path and Dynamic Client Registration policy so ChatGPT can register its OAuth client. The OAuth server and Dynamic Client Registration were disabled on 2026-10-10; the public metadata alone does not prove readiness. Before rollout, verify the provider discovery metadata advertises refresh-token support (`offline_access` or the provider equivalent) and that authorization grants issue refresh tokens, as ChatGPT needs refresh support for long-lived connections. Use asymmetric signing keys for new projects; review key migration guidance before changing signing keys on a project with existing sessions.
 
 The Cloudflare gateway serves the consent screen at `/oauth/consent`. It requires `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. GitHub sign-in must already be enabled in Supabase if users need to sign in from this screen.
 
@@ -35,7 +35,7 @@ SITE_URL=https://open-box.space
 
 After ChatGPT registers its OAuth client, approve that exact client ID in `MCP_OAUTH_ALLOWED_CLIENT_IDS` (comma-separated for multiple approved clients). An empty allow-list denies all Supabase OAuth clients. A token from another OAuth application in the same Supabase project does not grant MCP access.
 
-Keep the legacy admin token private. When an OAuth issuer is configured, MCP routes accept verified Supabase OAuth access tokens and valid Open-Box sessions; Supabase users must be linked to an enabled, non-guest Open-Box user. Linking should be done by an administrator using the Supabase Auth user UUID as the Open-Box user's `sso_id`. Do not link by email alone.
+Keep the legacy admin token private. When an OAuth issuer is configured, MCP routes accept verified Supabase OAuth access tokens and valid Open-Box sessions; Supabase users must be linked to an enabled, non-guest Open-Box user. Linking should be done by an administrator using the Supabase Auth user UUID on an explicitly authorized Open-Box account. The existing administrator uses native GitHub numeric ID `297973909`; do not overwrite that link with a Supabase UUID. Use a separate authorized least-privilege account or implement a reviewed multi-identity mapping first. Do not link by email alone.
 
 Check the public resource metadata endpoint after deployment:
 

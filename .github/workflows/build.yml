@@ -11,15 +11,17 @@ concurrency:
 
 jobs:
   mcp-test:
-    name: MCP authentication tests
+    name: Authentication and gateway tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.26.4"
-      - run: go test -p 1 ./server/mcp
-      - run: node --test deploy/cloudflare/test/worker.test.js
+      - run: go test -p 1 ./server/handles ./server/mcp ./server/static
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: deploy/cloudflare
+      - run: node --test deploy/cloudflare/test/*.test.js
 
   build:
     strategy:
