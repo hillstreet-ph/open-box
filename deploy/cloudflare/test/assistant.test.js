@@ -38,6 +38,32 @@ function me(user = {}) {
   });
 }
 
+test("structured Workers AI responses are validated before execution", async (t) => {
+  stub(t, async () => me({ role: 0 }));
+  const response = await handleAssistant(
+    request("chat", { prompt: "List /Workspace" }),
+    {
+      ...env,
+      AI: {
+        run: async (_model, input) => {
+          assert.equal(input.response_format.type, "json_schema");
+          return {
+            response: {
+              message: "Inspect this folder.",
+              action: { tool: "list", path: "/Workspace" },
+            },
+          };
+        },
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).action, {
+    tool: "list",
+    path: "/Workspace",
+  });
+});
+
 test("native identity redirects are rejected without forwarding the session", async (t) => {
   let calls = 0;
   stub(t, async (_url, options) => {
