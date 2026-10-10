@@ -249,24 +249,44 @@ export async function handleAssistant(request, env) {
           properties: {
             message: { type: "string" },
             action: {
-              type: ["object", "null"],
-              properties: {
-                tool: {
-                  type: "string",
-                  enum: ["list", "get", "mkdir", "rename", "copy"],
+              anyOf: [
+                { type: "null" },
+                {
+                  type: "object",
+                  properties: {
+                    tool: { type: "string", enum: ["list", "get", "mkdir"] },
+                    path: { type: "string" },
+                  },
+                  required: ["tool", "path"],
+                  additionalProperties: false,
                 },
-                path: { type: "string" },
-                name: { type: "string" },
-                src_dir: { type: "string" },
-                dst_dir: { type: "string" },
-                names: {
-                  type: "array",
-                  items: { type: "string" },
-                  maxItems: 20,
+                {
+                  type: "object",
+                  properties: {
+                    tool: { type: "string", enum: ["rename"] },
+                    path: { type: "string" },
+                    name: { type: "string" },
+                  },
+                  required: ["tool", "path", "name"],
+                  additionalProperties: false,
                 },
-              },
-              required: ["tool"],
-              additionalProperties: false,
+                {
+                  type: "object",
+                  properties: {
+                    tool: { type: "string", enum: ["copy"] },
+                    src_dir: { type: "string" },
+                    dst_dir: { type: "string" },
+                    names: {
+                      type: "array",
+                      items: { type: "string" },
+                      minItems: 1,
+                      maxItems: 20,
+                    },
+                  },
+                  required: ["tool", "src_dir", "dst_dir", "names"],
+                  additionalProperties: false,
+                },
+              ],
             },
           },
           required: ["message", "action"],
