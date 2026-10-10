@@ -73,6 +73,24 @@ export function validateAction(value) {
   throw new Error("unsupported_action");
 }
 
+function exactCommand(prompt) {
+  // Only a complete command and one explicit absolute path bypass the model.
+  // Quote paths containing spaces; compound requests still require planning.
+  const match =
+    /^(list|get|mkdir|create(?: a folder(?: at)?| folder(?: at)?)?)\s+("[^"\r\n]+"|'[^'\r\n]+'|\/[^\s"'`]+)$/i.exec(
+      prompt.trim(),
+    );
+  if (!match) return null;
+  const verb = match[1].toLowerCase();
+  const raw = match[2];
+  const path =
+    raw.startsWith('"') || raw.startsWith("'") ? raw.slice(1, -1) : raw;
+  return validateAction({
+    tool: verb === "list" || verb === "get" ? verb : "mkdir",
+    path,
+  });
+}
+
 async function readBody(request) {
   const reader = request.body?.getReader();
   if (!reader) throw new Error("invalid_body");
@@ -240,7 +258,6 @@ export async function handleAssistant(request, env) {
         return json({ error: "confirmation_required", action }, 409);
       return await execute(env, authorization, action);
     }
-    if (!env.AI) return json({ error: "assistant_unavailable" }, 503);
     if (
       typeof body.prompt !== "string" ||
       !body.prompt.trim() ||
@@ -248,6 +265,15 @@ export async function handleAssistant(request, env) {
     )
       return json({ error: "invalid_prompt" }, 400);
     const path = filePath(body.path ?? "/");
+    const exact = exactCommand(body.prompt);
+    if (exact)
+      return json({
+        assistant: "Agent Assistant",
+        message: `Requested ${exact.tool}: ${exact.path}`,
+        action: exact,
+        requires_confirmation: exact.tool === "mkdir",
+      });
+    if (!env.AI) return json({ error: "assistant_unavailable" }, 503);
     const result = await env.AI.run(MODEL, {
       messages: [
         {

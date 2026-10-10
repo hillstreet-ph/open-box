@@ -41,7 +41,7 @@ function me(user = {}) {
 test("structured Workers AI responses are validated before execution", async (t) => {
   stub(t, async () => me({ role: 0 }));
   const response = await handleAssistant(
-    request("chat", { prompt: "List /Workspace" }),
+    request("chat", { prompt: "Show the contents of /Workspace" }),
     {
       ...env,
       AI: {
@@ -81,6 +81,91 @@ test("native identity redirects are rejected without forwarding the session", as
     await response.text(),
     /outside.example|test-user-session/,
   );
+});
+
+test("exact path commands preserve the requested target without model inference", async (t) => {
+  let calls = 0;
+  stub(t, async () => {
+    calls++;
+    return me();
+  });
+  for (const [prompt, tool, path] of [
+    [
+      "Create /Workspace/Open-Box-Candidate-Test-959fcb33",
+      "mkdir",
+      "/Workspace/Open-Box-Candidate-Test-959fcb33",
+    ],
+    ["Create a folder at /Workspace/Reports", "mkdir", "/Workspace/Reports"],
+    ['mkdir "/Workspace/100% Complete"', "mkdir", "/Workspace/100% Complete"],
+    ["list '/Workspace/100% Complete'", "list", "/Workspace/100% Complete"],
+    ["get /Workspace/Report.txt", "get", "/Workspace/Report.txt"],
+  ]) {
+    const response = await handleAssistant(
+      request("chat", { prompt, path: "/" }),
+      {
+        ...env,
+        AI: {
+          run: () => {
+            throw new Error("model must not choose another path");
+          },
+        },
+      },
+    );
+    assert.equal(response.status, 200);
+    const plan = await response.json();
+    assert.deepEqual(plan.action, { tool, path });
+    assert.equal(plan.requires_confirmation, tool === "mkdir");
+  }
+  assert.equal(calls, 5); // Identity reads only; no filesystem writes during planning.
+});
+
+test("exact commands retain path validation and work without an AI binding", async (t) => {
+  stub(t, async () => me());
+  for (const prompt of [
+    "mkdir /Workspace/../Secret",
+    "list /a//b",
+    "get /a\\b",
+  ])
+    assert.equal(
+      (await handleAssistant(request("chat", { prompt }), { ...env, AI: null }))
+        .status,
+      400,
+    );
+  const response = await handleAssistant(
+    request("chat", { prompt: "mkdir /Workspace/Reports" }),
+    { ...env, AI: null },
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).requires_confirmation, true);
+});
+
+test("compound and ambiguous commands remain model proposals", async (t) => {
+  stub(t, async () => me());
+  for (const prompt of [
+    "Create Reports",
+    "create /Workspace/Reports and delete /Workspace/Inbox",
+    "list /Workspace/Folder With Spaces",
+    "list /Workspace\nmkdir /Workspace/Other",
+  ]) {
+    let modelCalls = 0;
+    const response = await handleAssistant(request("chat", { prompt }), {
+      ...env,
+      AI: {
+        run: async () => {
+          modelCalls++;
+          return {
+            response: {
+              message: "Please provide one exact path.",
+              action: null,
+            },
+          };
+        },
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(modelCalls, 1);
+    assert.equal((await response.json()).action, null);
+  }
 });
 
 test("assistant rejects a null body rather than treating it as an outage", async (t) => {
