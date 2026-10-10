@@ -46,7 +46,7 @@ Rechecked on 2026-10-10: the configured client ID is `Iv23lipQrjINz73M68vL`, and
 | Automatic registration | Off                                                                 |
 
 1. The owner opens [GitHub App settings](https://github.com/settings/apps/box-open) and registers both native callback URLs above.
-2. Generate an OAuth client secret in GitHub's secure settings. Store it only in protected native SSO configuration or an approved secret vault. An App private key is a separate credential and cannot substitute for the client secret. Do not paste secrets into chat, issues, commits or documentation.
+2. Rotate the existing OAuth client secret in GitHub's secure settings because it was visible in the supplied screenshots. The 2026-10-10 protected setting check confirmed only that a nonempty value is stored; it did not verify validity or complete rotation. Store the replacement only in protected native SSO configuration or an approved secret vault. An App private key is a separate credential and cannot substitute for the client secret. Do not paste secrets into chat, issues, commits or documentation.
 3. Keep password sign-in available. Build and stage the protected native GitHub handler before exposing production login; see issue #45 for browser-bound state, PKCE and replay protection. Rotate the OAuth client secret exposed in the supplied screenshots through GitHub's secure settings before enabling login. Do not switch on SSO simply to display a successful status.
 4. With the complete configuration, test an authorized administrator in a separate browser session: callback success, unchanged linked user, no accidental new administrator, denied unlinked user when auto-registration is off, and password-login fallback. Record sanitized evidence.
 

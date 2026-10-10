@@ -503,7 +503,24 @@ test("native provider guides stay in Open-Box and clearly require authorization"
       );
       assert.match(text, /online relay must stay disabled/);
     }
-    assert.doesNotMatch(text, /api.oplist.org|OpenList Token/);
+    if (provider === "onedrive") {
+      assert.match(
+        text,
+        /Set RedirectUri \(redirect_uri\) to the exact callback implemented and controlled by your OAuth application/,
+      );
+      assert.match(
+        text,
+        /Replace the native third-party default https:\/\/api\.oplist\.org\/onedrive\/callback before authorization/,
+      );
+      assert.match(
+        text,
+        /this guide does not implement a token callback endpoint/,
+      );
+    }
+    assert.doesNotMatch(
+      text,
+      /href="https:\/\/api\.oplist\.org|OpenList Token/,
+    );
   }
 });
 
