@@ -80,6 +80,69 @@ const STORAGE_PROVIDERS = [
   },
 ];
 
+// Exact presentation literals only; protocol identifiers and driver keys remain stable.
+const FRONTEND_BRAND_LABELS = {
+  "Manage and configure OpenList extensions with ZIP file upload and third-party URL installation": "Manage and configure Open-Box extensions with ZIP file upload and third-party URL installation",
+  "Initialize OpenList": "Initialize Open-Box",
+  "Your OpenList instance is ready to use.": "Your Open-Box instance is ready to use.",
+  "OpenList Management": "Open-Box Management",
+  "Fill this only after OpenList reports that a 139 Mail SMS verification code was sent, then save the storage again.": "Fill this only after Open-Box reports that a 139 Mail SMS verification code was sent, then save the storage again.",
+  "Allow uploading directly to OneDrive without going through OpenList": "Allow uploading directly to OneDrive without going through Open-Box",
+  "Powered by OpenList": "Powered by Open-Box"
+};
+const OPEN_BOX_ABOUT = `# Open-Box
+
+![Open-Box](/open-box-brand.svg)
+
+Your clouds. One Open-Box.
+
+Open-Box is HillStreet's multi-cloud file manager. Connect each storage account using its own authorization and mount path.
+
+- [Connect storage](/settings/integrations)
+- [Administration](/@manage/storages)
+- [Source code](https://github.com/hillstreet-ph/open-box)
+- [MCP setup](https://github.com/hillstreet-ph/open-box/blob/main/docs/platform/CHATGPT_MCP.md)
+
+## Open-source attribution
+
+Open-Box is derived from OpenList and AList under AGPL-3.0. Upstream contributors, copyright notices, source history and license terms are retained in the repository.
+
+- [Upstream source](https://github.com/OpenListTeam/OpenList)
+- [License](https://github.com/hillstreet-ph/open-box/blob/main/LICENSE)
+`;
+
+function versionFrontendImports(source) {
+  return source.replace(/(["'`])((?:\/?assets\/|\.\.?\/)[^"'`\s?]+\.js)\1/g, "$1$2?open-box-brand=20261010$1");
+}
+
+function applicationDocumentPath(pathname) {
+  let path;
+  try { path = decodeURIComponent(pathname); } catch { return false; }
+  return !/^\/(?:api|d|p|ad|ap|ae|sd|sad|dav|s3|assets|images|streamer|static|debug|i|mcp|auth|ai|\.well-known)(?:\/|$)/i.test(path);
+}
+
+export function brandFrontendAsset(source, kind) {
+  if (kind === "html") return versionFrontendImports(source).replace(/(<meta[^>]+(?:name="generator"|name="apple-mobile-web-app-title")[^>]+content=")OpenList("[^>]*>)/g, "$1Open-Box$2");
+  if (kind === "manifest") {
+    let manifest;
+    try { manifest = JSON.parse(source); } catch { return source; }
+    manifest.name = "Open-Box";
+    manifest.short_name = "Open-Box";
+    manifest.icons = [{src:"/open-box-brand.svg",sizes:"any",type:"image/svg+xml",purpose:"any"}];
+    return JSON.stringify(manifest);
+  }
+  let result = versionFrontendImports(source);
+  for (const [original, branded] of Object.entries(FRONTEND_BRAND_LABELS)) {
+    result = result.split(JSON.stringify(original)).join(JSON.stringify(branded));
+    // Rolldown emits template and single-quoted literals in modern/legacy chunks.
+    for (const quote of ["`", "'"]) {
+      const escape = value => value.replaceAll("\\", "\\\\").replaceAll(quote, "\\" + quote).replaceAll("${", "\\${").replaceAll("\n", "\\n").replaceAll("\r", "\\r");
+      result = result.split(quote + escape(original) + quote).join(quote + escape(branded) + quote);
+    }
+  }
+  return result.replaceAll("https://raw.githubusercontent.com/OpenListTeam/OpenList/main/README.md", "/open-box-about.md").replaceAll('href:"https://github.com/OpenListTeam/OpenList"', 'href:"https://github.com/hillstreet-ph/open-box"').replaceAll('href:`https://github.com/OpenListTeam/OpenList`', 'href:`https://github.com/hillstreet-ph/open-box`');
+}
+
 export function safeNext(value) {
   return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
     ? value
@@ -149,7 +212,7 @@ export async function integrationStatus(env) {
   const services = [
     { id: "cloudflare", name: "Cloudflare Gateway", state: "operational", detail: "Edge, TLS, routing, and settings UI" },
     { id: "zeabur", name: "Zeabur Runtime", state: origin.ok ? "operational" : "degraded", detail: "Open-Box application origin" },
-    { id: "supabase", name: "Supabase", state: supabase.ok ? "operational" : "degraded", detail: "Postgres, Auth, Storage, and backups" },
+    { id: "supabase", name: "Supabase", state: supabase.ok ? "operational" : "degraded", detail: "Auth endpoint health; database, storage, and backups require separate verification" },
     { id: "github", name: "GitHub SSO", state: openList.githubSso ? "operational" : "action_required", detail: "Administrator authentication" },
     { id: "workers-ai", name: "Workers AI", state: env.AI ? "operational" : "action_required", detail: "Edge AI chat and embeddings" },
     { id: "docker", name: "Docker Delivery", state: "configured", detail: "GitHub Actions image build and release" },
@@ -350,6 +413,10 @@ async function proxy(request, env, url) {
   const origin = new URL(env.ORIGIN_URL);
   const target = new URL(url.pathname + url.search, origin);
   const headers = new Headers(request.headers);
+  if (request.method === "GET" && (url.pathname.startsWith("/assets/") || url.pathname === "/manifest.json" || url.pathname.startsWith("/@manage") || url.pathname === "/")) {
+    headers.delete("If-None-Match");
+    headers.delete("If-Modified-Since");
+  }
   headers.set("Host", origin.host);
   headers.set("X-Forwarded-Host", url.host);
   headers.set("X-Forwarded-Proto", "https");
@@ -364,7 +431,24 @@ async function proxy(request, env, url) {
       return json(payload, response.status);
     }
   }
-  const output = new Response(response.body, response);
+  const contentType = response.headers.get("content-type") || "";
+  let kind = "";
+  if (request.method === "GET" && response.status === 200) {
+    const applicationDocument = applicationDocumentPath(url.pathname);
+    if (applicationDocument && contentType.includes("text/html")) kind = "html";
+    if (url.pathname.startsWith("/assets/") && url.pathname.endsWith(".js") && /(?:javascript|ecmascript)/.test(contentType)) kind = "javascript";
+    if (url.pathname === "/manifest.json" && contentType.includes("json")) kind = "manifest";
+  }
+  let output;
+  if (kind) {
+    const source = await response.clone().text();
+    if (kind === "html" && !(source.includes("window.OPENLIST_CONFIG") && /<div[^>]+id=["']root["']/.test(source))) kind = "";
+    output = kind ? new Response(brandFrontendAsset(source, kind), response) : new Response(response.body, response);
+  } else output = new Response(response.body, response);
+  if (kind) {
+    for (const header of ["content-length", "content-encoding", "etag", "last-modified"]) output.headers.delete(header);
+    output.headers.set("cache-control", kind === "html" ? "no-store" : "public, max-age=300, must-revalidate");
+  }
   output.headers.set("X-Content-Type-Options", "nosniff");
   output.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   output.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
@@ -377,6 +461,7 @@ export default {
     if (!env.ORIGIN_URL || !env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
       return json({ error: "gateway_not_configured" }, 503);
     }
+    if (url.pathname === "/open-box-about.md" && request.method === "GET") return new Response(OPEN_BOX_ABOUT, {headers:{"content-type":"text/markdown; charset=utf-8","cache-control":"public, max-age=300","x-content-type-options":"nosniff"}});
     if (url.pathname.startsWith("/auth/")) return handleAuth(request, env, url);
     if (url.pathname.startsWith("/ai/")) return handleAi(request, env, url);
     if (url.pathname === "/open-box-brand.svg" && (request.method === "GET" || request.method === "HEAD")) {
