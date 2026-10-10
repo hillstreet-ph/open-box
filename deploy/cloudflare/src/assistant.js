@@ -18,7 +18,7 @@ export function filePath(value) {
     value.length > 2048 ||
     !value.startsWith("/") ||
     value !== value.trim() ||
-    /[%\\\x00-\x1f\x7f]/.test(value) ||
+    /[\\\x00-\x1f\x7f]/.test(value) ||
     value.includes("//")
   )
     throw new Error("invalid_path");
@@ -34,7 +34,7 @@ function fileName(value) {
     value.length > 255 ||
     value === "." ||
     value === ".." ||
-    /[/\\%\x00-\x1f\x7f]/.test(value)
+    /[/\\\x00-\x1f\x7f]/.test(value)
   )
     throw new Error("invalid_name");
   return value;
@@ -137,16 +137,25 @@ async function execute(env, authorization, action) {
     `/api/fs/${tool}`,
     args,
   );
-  if (!response.ok || payload?.code !== 200)
+  if (!response.ok || payload?.code !== 200) {
+    const status =
+      !response.ok && response.status >= 400 && response.status <= 599
+        ? response.status
+        : Number.isInteger(payload?.code) &&
+            payload.code >= 400 &&
+            payload.code <= 599
+          ? payload.code
+          : 502;
     return json(
       {
         error: "file_operation_failed",
-        code: payload?.code ?? response.status,
+        code: status,
         message:
           "Open-Box denied or could not complete this operation. Check your file permissions and the target path.",
       },
-      payload?.code === 403 ? 403 : 400,
+      status,
     );
+  }
   if (tool === "list")
     return json({
       tool,

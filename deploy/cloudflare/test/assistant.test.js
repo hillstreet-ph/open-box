@@ -167,14 +167,13 @@ test("assistant session returns capabilities without secret identity fields", as
   assert.equal(body.writes_require_confirmation, true);
 });
 
-test("path and action validation reject traversal, encoded separators, URLs and admin operations", () => {
+test("path and action validation reject traversal, separators, URLs and admin operations", () => {
   for (const path of [
     "https://outside.example",
     "/../secret",
     "/a/./b",
     "/a//b",
     "/a\\b",
-    "/%2e%2e/secret",
     "/a\u0000b",
   ])
     assert.throws(() => filePath(path));
@@ -331,6 +330,69 @@ test("backend permission denial remains denied", async (t) => {
   );
 });
 
+test("literal percent signs remain raw native filesystem characters", async (t) => {
+  assert.equal(
+    filePath("/Workspace/100% Complete"),
+    "/Workspace/100% Complete",
+  );
+  assert.equal(filePath("/Workspace/%2e%2e"), "/Workspace/%2e%2e");
+  assert.equal(
+    validateAction({
+      tool: "rename",
+      path: "/Workspace/100% Complete",
+      name: "50% Done",
+    }).name,
+    "50% Done",
+  );
+  let count = 0;
+  let forwarded;
+  stub(t, async (_url, init) => {
+    if (++count === 1) return me();
+    forwarded = JSON.parse(init.body);
+    return Response.json({ code: 200, data: { content: [], total: 0 } });
+  });
+  const response = await handleAssistant(
+    request("execute", {
+      action: { tool: "list", path: "/Workspace/100% Complete" },
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.path, "/Workspace/100% Complete");
+});
+
+test("native error envelopes and HTTP failures preserve error classes", async (t) => {
+  for (const status of [401, 403, 404, 429, 500, 503]) {
+    let count = 0;
+    stub(t, async () =>
+      ++count === 1
+        ? me()
+        : Response.json({ code: status, message: "private provider detail" }),
+    );
+    const response = await handleAssistant(
+      request("execute", { action: { tool: "list", path: "/Workspace" } }),
+      env,
+    );
+    assert.equal(response.status, status);
+    const body = await response.json();
+    assert.equal(body.code, status);
+    assert.doesNotMatch(JSON.stringify(body), /private provider detail/);
+  }
+  let count = 0;
+  stub(t, async () =>
+    ++count === 1 ? me() : Response.json({ code: 400 }, { status: 503 }),
+  );
+  assert.equal(
+    (
+      await handleAssistant(
+        request("execute", { action: { tool: "list", path: "/Workspace" } }),
+        env,
+      )
+    ).status,
+    503,
+  );
+});
+
 test("file inspection strips provider URLs and bearer-like fields", async (t) => {
   let count = 0;
   stub(t, async () =>
@@ -398,6 +460,13 @@ test("native provider guides stay in Open-Box and clearly require authorization"
     const text = await response.text();
     assert.match(text, /Authorization required/);
     assert.match(text, /Open-Box/);
+    if (provider !== "dropbox") {
+      assert.match(
+        text,
+        /Before entering credentials, disable Use Online API \(UseOnlineAPI=false\)/,
+      );
+      assert.match(text, /online relay must stay disabled/);
+    }
     assert.doesNotMatch(text, /api.oplist.org|OpenList Token/);
   }
 });
