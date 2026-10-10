@@ -38,6 +38,25 @@ function me(user = {}) {
   });
 }
 
+test("native identity redirects are rejected without forwarding the session", async (t) => {
+  let calls = 0;
+  stub(t, async (_url, options) => {
+    calls += 1;
+    assert.equal(options.redirect, "manual");
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "https://outside.example" },
+    });
+  });
+  const response = await handleAssistant(request("session"), env);
+  assert.equal(response.status, 503);
+  assert.equal(calls, 1);
+  assert.doesNotMatch(
+    await response.text(),
+    /outside.example|test-user-session/,
+  );
+});
+
 test("assistant rejects a null body rather than treating it as an outage", async (t) => {
   stub(t, async () => me());
   assert.equal(
