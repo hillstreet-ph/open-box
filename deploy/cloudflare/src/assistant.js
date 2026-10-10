@@ -109,9 +109,11 @@ async function backend(env, authorization, endpoint, body) {
       "content-type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(15000),
   });
+  if (response.status >= 300 && response.status < 400)
+    throw new Error("origin_redirect_not_allowed");
   const payload = await response.json().catch(() => null);
   return { response, payload };
 }
@@ -290,7 +292,6 @@ export async function handleAssistant(request, env) {
     return json(
       {
         error: "assistant_unavailable",
-        error_kind: ["TypeError", "TimeoutError", "AbortError"].includes(error.name) ? error.name : "unavailable",
         message:
           "Agent Assistant is temporarily unavailable. Your request has not been retried.",
       },
