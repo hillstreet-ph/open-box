@@ -7,15 +7,17 @@ Verified 2026-10-10. Public application: https://open-box.space.
 | Component | Evidence |
 | --- | --- |
 | Cloudflare gateway | `open-box-gateway`, account `c0e6bd9a7249856cb8497e7fe340e7ce` |
-| Tested branding version | `173a3b01-c790-410f-8753-5b9ae800b9dc` |
-| Branding deployment | `2697475f-25c5-47f1-b63a-02dee7b5020d`, 100% traffic |
+| Current edge version | `c02b9dc1-0c96-4f7b-a59d-846eb12cdfca` |
+| Current edge deployment | `5c3c6092-bd46-483a-96a4-611b3061d642`, 100% traffic |
 | Zeabur | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce`, running |
 | Origin | https://open-box-space.zeabur.app |
 | Runtime version | Backend commit `a879c97`, frontend v4.2.6; older than current repository |
 | Supabase | `huadtiuuoiriqrjpjxhr`; `public.x_*` tables present |
 | Storage mounts | Zero, confirmed through administrator API and database |
 
-Root/admin/nested application HTML, branded About attribution, SVG manifest and frontend cache versioning passed exact-version preview checks before deployment. The live browser confirms `Home | Open-Box` and `Powered by Open-Box`. Stored HTML/downloads/partial responses retain their original bytes. Upstream protocol identifiers and AGPL attribution remain intact.
+Branding version `173a3b01-c790-410f-8753-5b9ae800b9dc` passed exact-version root/admin/nested application HTML, About attribution, SVG manifest and cache checks. Current edge version adds reviewed OAuth consent and truthful readiness guidance; its exact preview and production checks passed for branding, action-required status, account mount paths, consent UI and invalid-request rejection. All 14 local edge tests and the Go MCP/static suites passed. The live browser confirms `Home | Open-Box` and `Powered by Open-Box`. Stored HTML/downloads/partial responses retain their original bytes. Upstream protocol identifiers and AGPL attribution remain intact.
+
+The temporary Worker version URLs were disabled again after validation. Open-Box PRs #35, #38 and #39 were merged. The latest edge source is recorded in PR #38; this does not imply the older backend binary was upgraded.
 
 ## Remaining rollout gates
 
