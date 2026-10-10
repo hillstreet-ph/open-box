@@ -20,6 +20,35 @@ import (
 
 var oauthVerifiers sync.Map
 
+func allowedOAuthClient(clientID, allowlist string) bool {
+	if clientID == "" {
+		return false
+	}
+	for _, approved := range strings.Split(allowlist, ",") {
+		if strings.TrimSpace(approved) == clientID {
+			return true
+		}
+	}
+	return false
+}
+
+func oauthVerifier(issuer, audience string) (*oidc.IDTokenVerifier, error) {
+	key := issuer + "\x00" + audience
+	if cached, ok := oauthVerifiers.Load(key); ok {
+		return cached.(*oidc.IDTokenVerifier), nil
+	}
+	// go-oidc retains this context for future JWKS refreshes. A request context
+	// would invalidate the cached verifier after the first request completes.
+	providerCtx := oidc.ClientContext(context.Background(), &http.Client{Timeout: 10 * time.Second})
+	provider, err := oidc.NewProvider(providerCtx, issuer)
+	if err != nil {
+		return nil, err
+	}
+	verifier := provider.Verifier(&oidc.Config{ClientID: audience})
+	actual, _ := oauthVerifiers.LoadOrStore(key, verifier)
+	return actual.(*oidc.IDTokenVerifier), nil
+}
+
 func ProtectedResourceMetadata(c *gin.Context) {
 	if conf.Conf == nil || !conf.Conf.MCP.Enable || strings.TrimSpace(conf.Conf.MCP.OAuthIssuer) == "" {
 		c.Status(http.StatusNotFound)
@@ -109,20 +138,9 @@ func authenticateSupabaseUser(ctx context.Context, rawToken string) (*model.User
 		return nil, errors.New("MCP OAuth is not configured")
 	}
 
-	key := issuer + "\x00" + audience
-	var verifier *oidc.IDTokenVerifier
-	if cached, ok := oauthVerifiers.Load(key); ok {
-		verifier = cached.(*oidc.IDTokenVerifier)
-	} else {
-		discoveryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		provider, err := oidc.NewProvider(discoveryCtx, issuer)
-		if err != nil {
-			return nil, err
-		}
-		verifier = provider.Verifier(&oidc.Config{ClientID: audience})
-		actual, _ := oauthVerifiers.LoadOrStore(key, verifier)
-		verifier = actual.(*oidc.IDTokenVerifier)
+	verifier, err := oauthVerifier(issuer, audience)
+	if err != nil {
+		return nil, err
 	}
 
 	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -136,6 +154,9 @@ func authenticateSupabaseUser(ctx context.Context, rawToken string) (*model.User
 	}
 	if err := idToken.Claims(&claims); err != nil || strings.TrimSpace(claims.ClientID) == "" {
 		return nil, errors.New("token is not an OAuth client token")
+	}
+	if !allowedOAuthClient(claims.ClientID, conf.Conf.MCP.OAuthAllowedClientIDs) {
+		return nil, errors.New("OAuth client is not approved for MCP")
 	}
 
 	// Open-Box accounts must be explicitly linked by SSO ID; OAuth never auto-creates users.

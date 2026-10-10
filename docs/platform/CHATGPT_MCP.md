@@ -29,8 +29,11 @@ Set these backend environment variables in Zeabur (use the project URL already c
 MCP_ENABLE=true
 MCP_OAUTH_ISSUER=https://<project-ref>.supabase.co/auth/v1
 MCP_OAUTH_AUDIENCE=authenticated
+MCP_OAUTH_ALLOWED_CLIENT_IDS=<approved-chatgpt-oauth-client-id>
 SITE_URL=https://open-box.space
 ```
+
+After ChatGPT registers its OAuth client, approve that exact client ID in `MCP_OAUTH_ALLOWED_CLIENT_IDS` (comma-separated for multiple approved clients). An empty allow-list denies all Supabase OAuth clients. A token from another OAuth application in the same Supabase project does not grant MCP access.
 
 Keep the legacy admin token private. When an OAuth issuer is configured, MCP routes accept verified Supabase OAuth access tokens and valid Open-Box sessions; Supabase users must be linked to an enabled, non-guest Open-Box user. Linking should be done by an administrator using the Supabase Auth user UUID as the Open-Box user's `sso_id`. Do not link by email alone.
 
