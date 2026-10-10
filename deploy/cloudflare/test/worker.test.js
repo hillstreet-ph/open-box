@@ -121,7 +121,7 @@ test("stored HTML and partial responses preserve file bytes and headers", async 
  const body='<meta name="generator" content="OpenList">';
  const env={ORIGIN_URL:"https://origin.example",SUPABASE_URL:"https://project.example",SUPABASE_PUBLISHABLE_KEY:"public"};
  try {
-  for(const [path,status,type] of [["/d/files/document.html",200,"text/html"],["/dav/document.html",200,"text/html"],["/assets/en-test.js",206,"application/javascript"],["/",206,"text/html"]]) {
+  for(const [path,status,type] of [["/p/document.html",200,"text/html"],["/api/page",200,"text/html"],["/static/page.html",200,"text/html"],["/d/files/document.html",200,"text/html"],["/dav/document.html",200,"text/html"],["/assets/en-test.js",206,"application/javascript"],["/",206,"text/html"]]) {
    globalThis.fetch=async()=>new Response(body,{status,headers:{"content-type":type,"etag":"file-etag","content-range":"bytes 0-42/100"}});
    const response=await worker.fetch(new Request("https://open-box.space"+path),env);
    assert.equal(await response.text(),body);
@@ -144,4 +144,17 @@ test("branding versions entry and transitive chunk URLs for existing browser cac
  assert.match(js,/About-abc.js\?open-box-brand=20261010/);
  assert.match(js,/home-abc.js\?open-box-brand=20261010/);
  assert.equal(brandFrontendAsset(js,"javascript"),js);
+});
+
+
+test("nested storage pages receive branded SPA metadata and versioned chunks",async()=>{
+ const original=globalThis.fetch;
+ globalThis.fetch=async()=>new Response('<meta name="generator" content="OpenList"><script>window.OPENLIST_CONFIG={}</script><div id="root"></div><script src="/assets/index-a.js"></script>',{headers:{"content-type":"text/html"}});
+ try {
+  const response=await worker.fetch(new Request("https://open-box.space/GoogleDrive/Documents"),{ORIGIN_URL:"https://origin.example",SUPABASE_URL:"https://project.example",SUPABASE_PUBLISHABLE_KEY:"public"});
+  const html=await response.text();
+  assert.match(html,/content="Open-Box"/);
+  assert.match(html,/index-a.js\?open-box-brand=20261010/);
+  assert.equal(response.headers.get("cache-control"),"no-store");
+ } finally {globalThis.fetch=original;}
 });

@@ -115,6 +115,12 @@ function versionFrontendImports(source) {
   return source.replace(/(["'`])((?:\/?assets\/|\.\.?\/)[^"'`\s?]+\.js)\1/g, "$1$2?open-box-brand=20261010$1");
 }
 
+function applicationDocumentPath(pathname) {
+  let path;
+  try { path = decodeURIComponent(pathname); } catch { return false; }
+  return !/^\/(?:api|d|p|ad|ap|ae|sd|sad|dav|s3|assets|images|streamer|static|debug|i|mcp|auth|ai|\.well-known)(?:\/|$)/i.test(path);
+}
+
 export function brandFrontendAsset(source, kind) {
   if (kind === "html") return versionFrontendImports(source).replace(/(<meta[^>]+(?:name="generator"|name="apple-mobile-web-app-title")[^>]+content=")OpenList("[^>]*>)/g, "$1Open-Box$2");
   if (kind === "manifest") {
@@ -428,12 +434,17 @@ async function proxy(request, env, url) {
   const contentType = response.headers.get("content-type") || "";
   let kind = "";
   if (request.method === "GET" && response.status === 200) {
-    const applicationDocument = url.pathname === "/" || url.pathname === "/@manage" || url.pathname.startsWith("/@manage/") || url.pathname === "/@init";
+    const applicationDocument = applicationDocumentPath(url.pathname);
     if (applicationDocument && contentType.includes("text/html")) kind = "html";
     if (url.pathname.startsWith("/assets/") && url.pathname.endsWith(".js") && /(?:javascript|ecmascript)/.test(contentType)) kind = "javascript";
     if (url.pathname === "/manifest.json" && contentType.includes("json")) kind = "manifest";
   }
-  const output = kind ? new Response(brandFrontendAsset(await response.text(), kind), response) : new Response(response.body, response);
+  let output;
+  if (kind) {
+    const source = await response.text();
+    if (kind === "html" && !(source.includes("window.OPENLIST_CONFIG") && /<div[^>]+id=["']root["']/.test(source))) kind = "";
+    output = new Response(kind ? brandFrontendAsset(source, kind) : source, response);
+  } else output = new Response(response.body, response);
   if (kind) {
     for (const header of ["content-length", "content-encoding", "etag", "last-modified"]) output.headers.delete(header);
     output.headers.set("cache-control", kind === "html" ? "no-store" : "public, max-age=300, must-revalidate");
