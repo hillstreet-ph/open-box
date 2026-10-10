@@ -32,7 +32,7 @@ Requires existing AI and ORIGIN_URL bindings. Assistant requests always authenti
 
 ## GitHub SSO deployment checklist
 
-Verified on 2026-10-10: GitHub App `box-open` belongs to `master-kanor`, its client ID matches native Open-Box settings, and native administrator `admin` is linked to GitHub user ID `297973909`. SSO is disabled and the client-secret setting is empty. This change does not claim SSO is enabled or tested.
+Rechecked on 2026-10-10: the configured client ID is `Iv23lipQrjINz73M68vL`, and native administrator `admin` remains linked to GitHub user ID `297973909`. SSO is now enabled and a client secret is present in protected settings. Automatic registration and compatibility mode were also enabled in the observed configuration. This is configuration evidence, not proof of callback success or a verified login. The gateway reports SSO as Configured until an authorized end-to-end check is recorded. Do not retrieve or publish the stored secret.
 
 | Setting                | Intended value                                                      |
 | ---------------------- | ------------------------------------------------------------------- |
@@ -50,7 +50,21 @@ Verified on 2026-10-10: GitHub App `box-open` belongs to `master-kanor`, its cli
 3. Keep password sign-in available. Inspect the native SSO backend's state/PKCE protection before exposing production login; the current native GitHub implementation needs this review. Do not switch on SSO simply to display a successful status.
 4. With the complete configuration, test an authorized administrator in a separate browser session: callback success, unchanged linked user, no accidental new administrator, denied unlinked user when auto-registration is off, and password-login fallback. Record sanitized evidence.
 
-Supabase GitHub OAuth is a separate flow and uses the project's `/auth/v1/callback`. A native mount, Composio connection, and OpenConnect connection are also distinct grants. Verify each account's own listing and read access before marking it connected. Provider consent is required for Google, Microsoft, Dropbox and other providers.
+Supabase GitHub OAuth is a separate flow and uses the project's `/auth/v1/callback`. The shared `huadtiuuoiriqrjpjxhr` project uses `https://open-connect.site` as its Site URL. Preserve that URL and its existing redirects; Open-Box needs an explicitly reviewed consent routing plan rather than replacing shared Auth configuration. Native GitHub numeric IDs and Supabase UUID subjects are different identities, so do not replace the administrator's existing `sso_id` to enable MCP. A native mount, Composio connection, and OpenConnect connection are also distinct grants. Verify each account's own listing and read access before marking it connected. Provider consent is required for Google, Microsoft, Dropbox and other providers.
+
+## Provider and runtime mapping
+
+| Provider     | Existing target                                                        | Verified evidence and remaining boundary                                                                     |
+| ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| GitHub       | `hillstreet-ph/open-box`, `main`, PR #44                               | Repository read works; approving review and exact-head checks remain release gates                           |
+| Cloudflare   | `open-box-gateway`, zone `open-box.space`                              | Account, route, current deployment and candidate read work                                                   |
+| Zeabur       | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce` | Runtime RUNNING; new backend source still requires a verified image build                                    |
+| Docker Hub   | `hillstreet/open-box`                                                  | Repository and latest multi-architecture digest read work; selected connector reports read=true, write=false |
+| Supabase     | `huadtiuuoiriqrjpjxhr`                                                 | Active healthy; one native `/Workspace` Local mount; shared OAuth rollout is separate                        |
+| Sentry       | `hillstreet/open-box`                                                  | Project read works; no unresolved issues in the checked 24-hour window, which does not prove SDK ingestion   |
+| Open-Connect | Existing personal gateway                                              | Auto and discovery work; no native Open-Box connection returned by provider inspection                       |
+
+The assistant uses the existing Workers AI binding. Binding presence is reported as Configured; only a signed-in model execution proves that operation. Keep provider tokens and native account credentials in their existing protected stores. Mobile remote-tool access is separate from installing a desktop-only MCP package.
 
 ## Validation and release
 

@@ -314,26 +314,33 @@ export async function integrationStatus(env) {
     {
       id: "github",
       name: "GitHub SSO",
-      state: openList.githubSso ? "operational" : "action_required",
-      detail: "Administrator authentication",
+      state: openList.githubSso ? "configured" : "action_required",
+      detail: openList.githubSso
+        ? "Enabled in settings; callback and account login still require verification"
+        : "Configure and verify administrator sign-in",
     },
     {
       id: "workers-ai",
       name: "Workers AI",
-      state: env.AI ? "operational" : "action_required",
-      detail: "Edge AI chat and embeddings",
+      state: env.AI ? "configured" : "action_required",
+      detail:
+        "AI binding; model execution requires a signed-in assistant check",
     },
     {
       id: "docker",
       name: "Docker Delivery",
       state: "configured",
-      detail: "GitHub Actions image build and release",
+      detail:
+        "Image delivery requires a successful build and deployed digest verification",
     },
   ];
   return {
     status: services.some(({ state }) => state === "degraded")
       ? "degraded"
-      : services.some(({ state }) => state === "action_required")
+      : services.some(
+            ({ state }) =>
+              state === "action_required" || state === "configured",
+          )
         ? "action_required"
         : "operational",
     checkedAt: new Date().toISOString(),
