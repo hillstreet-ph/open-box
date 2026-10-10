@@ -1,4 +1,4 @@
-const MODEL = "@cf/meta/llama-3.2-3b-instruct";
+const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const PREFIX = "/api/open-box/assistant";
 
 function json(body, status = 200) {
@@ -242,13 +242,48 @@ export async function handleAssistant(request, env) {
       ],
       max_tokens: 700,
       temperature: 0,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          type: "object",
+          properties: {
+            message: { type: "string" },
+            action: {
+              type: ["object", "null"],
+              properties: {
+                tool: {
+                  type: "string",
+                  enum: ["list", "get", "mkdir", "rename", "copy"],
+                },
+                path: { type: "string" },
+                name: { type: "string" },
+                src_dir: { type: "string" },
+                dst_dir: { type: "string" },
+                names: {
+                  type: "array",
+                  items: { type: "string" },
+                  maxItems: 20,
+                },
+              },
+              required: ["tool"],
+              additionalProperties: false,
+            },
+          },
+          required: ["message", "action"],
+          additionalProperties: false,
+        },
+      },
     });
     let plan;
     try {
       const text = result?.response;
-      if (typeof text !== "string" || text.length > 12000) throw new Error();
+      const serialized = typeof text === "string" ? text : JSON.stringify(text);
+      if (typeof serialized !== "string" || serialized.length > 12000)
+        throw new Error();
       plan = JSON.parse(
-        text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, ""),
+        serialized
+          .replace(/^\s*```(?:json)?\s*/i, "")
+          .replace(/\s*```\s*$/, ""),
       );
       if (
         !plan ||
