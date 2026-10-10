@@ -34,7 +34,7 @@ function stub(t, run) {
 function me(user = {}) {
   return Response.json({
     code: 200,
-    data: { id: 1, role: 1, username: "admin", disabled: false, ...user },
+    data: { id: 1, role: 2, username: "admin", disabled: false, ...user },
   });
 }
 
@@ -101,7 +101,7 @@ test("assistant rejects foreign origins before backend access", async (t) => {
 test("assistant rejects expired, guest, disabled and malformed identities", async (t) => {
   for (const response of [
     Response.json({ code: 401 }),
-    me({ role: 2 }),
+    me({ role: 1 }),
     me({ disabled: true }),
     me({ id: "1" }),
     me({ role: undefined }),
