@@ -441,9 +441,9 @@ async function proxy(request, env, url) {
   }
   let output;
   if (kind) {
-    const source = await response.text();
+    const source = await response.clone().text();
     if (kind === "html" && !(source.includes("window.OPENLIST_CONFIG") && /<div[^>]+id=["']root["']/.test(source))) kind = "";
-    output = new Response(kind ? brandFrontendAsset(source, kind) : source, response);
+    output = kind ? new Response(brandFrontendAsset(source, kind), response) : new Response(response.body, response);
   } else output = new Response(response.body, response);
   if (kind) {
     for (const header of ["content-length", "content-encoding", "etag", "last-modified"]) output.headers.delete(header);

@@ -158,3 +158,16 @@ test("nested storage pages receive branded SPA metadata and versioned chunks",as
   assert.equal(response.headers.get("cache-control"),"no-store");
  } finally {globalThis.fetch=original;}
 });
+
+
+test("non-SPA HTML fallback preserves binary body and validators",async()=>{
+ const original=globalThis.fetch;
+ const bytes=new Uint8Array([60,112,62,233,60,47,112,62]);
+ globalThis.fetch=async()=>new Response(bytes,{headers:{"content-type":"text/html; charset=iso-8859-1","content-length":"8","etag":"original"}});
+ try {
+  const response=await worker.fetch(new Request("https://open-box.space/custom-page"),{ORIGIN_URL:"https://origin.example",SUPABASE_URL:"https://project.example",SUPABASE_PUBLISHABLE_KEY:"public"});
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()),bytes);
+  assert.equal(response.headers.get("content-length"),"8");
+  assert.equal(response.headers.get("etag"),"original");
+ } finally {globalThis.fetch=original;}
+});
