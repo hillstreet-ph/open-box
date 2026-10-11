@@ -19,7 +19,10 @@ as $$
     from open_box.access_grants as grant_row
     where grant_row.artifact_id = target_artifact_id
       and (
-        grant_row.grantee_id = (select auth.uid())
+        (
+          grant_row.grantee_type = 'user'
+          and grant_row.grantee_id = (select auth.uid())
+        )
         or grant_row.grantee_type = 'public'
       )
       and grant_row.permission in ('read', 'write', 'admin')

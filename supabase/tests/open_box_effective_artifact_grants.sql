@@ -169,7 +169,9 @@ insert into open_box.access_grants (
   ('cccccccc-cccc-4ccc-8ccc-cccccccccccc',
    '22222222-2222-4222-8222-222222222222', 'user', 'read', null),
   ('dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-   '22222222-2222-4222-8222-222222222222', 'user', 'read', now() - interval '1 hour');
+   '22222222-2222-4222-8222-222222222222', 'user', 'read', now() - interval '1 hour'),
+  ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+   '22222222-2222-4222-8222-222222222222', 'role', 'read', null);
 
 -- Execute the exact forward migration under test.
 \ir ../migrations/20261010140000_restore_effective_artifact_grants.sql
@@ -221,7 +223,7 @@ select open_box_test.assert_count(
    where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd')
 );
 select open_box_test.assert_count(
-  'unrelated artifact stays denied',
+  'unsupported role-tagged UUID grant stays denied',
   0,
   (select count(*) from open_box.artifacts
    where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
