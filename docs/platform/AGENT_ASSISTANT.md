@@ -36,18 +36,18 @@ Requires existing AI and ORIGIN_URL bindings. Assistant requests always authenti
 
 Rechecked on 2026-10-10: the configured client ID is `Iv23lipQrjINz73M68vL`, and native administrator `admin` remains linked to GitHub user ID `297973909`. A client secret is present in protected settings. Production SSO login, automatic registration and compatibility mode were switched off on 2026-10-10 while the native callback security patch in issue #45 is validated. This is configuration evidence, not proof of callback success or a verified login. The gateway reports disabled SSO as Action required; an enabled configuration remains Configured until an authorized end-to-end check is recorded. Do not retrieve or publish the stored secret.
 
-| Setting                | Intended value                                                      |
-| ---------------------- | ------------------------------------------------------------------- |
-| Application            | `box-open` (GitHub App ID `4658661`)                                |
-| Homepage               | `https://open-box.space`                                            |
-| Platform               | `Github`                                                            |
-| Client ID              | `Iv23lipQrjINz73M68vL`                                              |
-| Compatibility mode     | Off                                                                 |
-| Sign-in callback       | `https://open-box.space/api/auth/sso_callback?method=sso_get_token` |
-| Account-link callback  | `https://open-box.space/api/auth/sso_callback?method=get_sso_id`    |
-| Automatic registration | Off                                                                 |
+| Setting                | Intended value                                 |
+| ---------------------- | ---------------------------------------------- |
+| Application            | `box-open` (GitHub App ID `4658661`)           |
+| Homepage               | `https://open-box.space`                       |
+| Platform               | `Github`                                       |
+| Client ID              | `Iv23lipQrjINz73M68vL`                         |
+| Compatibility mode     | Off                                            |
+| Sign-in callback       | `https://open-box.space/api/auth/sso_callback` |
+| Account-link callback  | `https://open-box.space/api/auth/sso_callback` |
+| Automatic registration | Off                                            |
 
-1. The owner opens [GitHub App settings](https://github.com/settings/apps/box-open) and registers both native callback URLs above.
+1. The owner opens [GitHub App settings](https://github.com/settings/apps/box-open) and registers the single queryless native callback above. Both popup flows use that callback; the reviewed PR #46 handler recovers their method from protected state. Do not register the old query-bearing method variants.
 2. Rotate the existing OAuth client secret in GitHub's secure settings because it was visible in the supplied screenshots. The 2026-10-10 protected setting check confirmed only that a nonempty value is stored; it did not verify validity or complete rotation. Store the replacement only in protected native SSO configuration or an approved secret vault. An App private key is a separate credential and cannot substitute for the client secret. Do not paste secrets into chat, issues, commits or documentation.
 3. Keep password sign-in available. Build and stage the protected native GitHub handler before exposing production login; see issue #45 for browser-bound state, PKCE and replay protection. Rotate the OAuth client secret exposed in the supplied screenshots through GitHub's secure settings before enabling login. Do not switch on SSO simply to display a successful status.
 4. With the complete configuration, test an authorized administrator in a separate browser session: callback success, unchanged linked user, no accidental new administrator, denied unlinked user when auto-registration is off, and password-login fallback. Record sanitized evidence.
