@@ -71,6 +71,9 @@ func SSOLoginRedirect(c *gin.Context) {
 		return
 	}
 	redirectUri := ssoRedirectUri(c, useCompatibility, method)
+	if platform == "Github" && !useCompatibility {
+		redirectUri = githubSSORedirectURI(c)
+	}
 	urlValues.Add("response_type", "code")
 	urlValues.Add("redirect_uri", redirectUri)
 	urlValues.Add("client_id", clientId)
@@ -301,12 +304,12 @@ func SSOLoginCallback(c *gin.Context) {
 	if usecompatibility {
 		argument = path.Base(c.Request.URL.Path)
 	}
-	if !utils.SliceContains([]string{"get_sso_id", "sso_get_token"}, argument) {
+	clientId := setting.GetStr(conf.SSOClientId)
+	platform := setting.GetStr(conf.SSOLoginPlatform)
+	if platform != "Github" && !utils.SliceContains([]string{"get_sso_id", "sso_get_token"}, argument) {
 		common.ErrorResp(c, errors.New("invalid request"), 500)
 		return
 	}
-	clientId := setting.GetStr(conf.SSOClientId)
-	platform := setting.GetStr(conf.SSOLoginPlatform)
 	clientSecret := setting.GetStr(conf.SSOClientSecret)
 	var tokenUrl, userUrl, scope, authField, idField, usernameField string
 	additionalForm := make(map[string]string)
@@ -367,12 +370,12 @@ func SSOLoginCallback(c *gin.Context) {
 			common.ErrorStrResp(c, "Disable SSO compatibility mode for protected GitHub sign-in", 400)
 			return
 		}
-		verifier, err := consumeGithubSSO(c, clientId, argument, ssoRedirectUri(c, false, argument))
+		var err error
+		argument, additionalForm["code_verifier"], err = consumeGithubSSO(c, clientId, githubSSORedirectURI(c))
 		if err != nil {
 			common.ErrorResp(c, err, 400)
 			return
 		}
-		additionalForm["code_verifier"] = verifier
 		client = githubSSOClient
 	}
 	var resp *resty.Response
@@ -390,6 +393,8 @@ func SSOLoginCallback(c *gin.Context) {
 		var redirect_uri string
 		if usecompatibility {
 			redirect_uri = common.GetApiUrl(c) + "/api/auth/" + argument
+		} else if platform == "Github" {
+			redirect_uri = githubSSORedirectURI(c)
 		} else {
 			redirect_uri = common.GetApiUrl(c) + "/api/auth/sso_callback" + "?method=" + argument
 		}

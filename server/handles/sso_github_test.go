@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,12 +19,11 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/go-cache"
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
 )
 
-const testGithubRedirect = "https://open-box.example/api/auth/sso_callback?method=get_sso_id"
+const testGithubRedirect = "https://open-box.example/api/auth/sso_callback"
 
 func githubContext(target string, cookie *http.Cookie) (*gin.Context, *httptest.ResponseRecorder) {
 	w := httptest.NewRecorder()
@@ -44,7 +44,11 @@ func beginTestGithub(t *testing.T) (url.Values, *http.Cookie) {
 	if err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, v); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { githubSSOAttempts.Del(v.Get("state")) })
+	t.Cleanup(func() {
+		githubSSOAttemptsMu.Lock()
+		delete(githubSSOAttempts, v.Get("state"))
+		githubSSOAttemptsMu.Unlock()
+	})
 	return v, w.Result().Cookies()[0]
 }
 
@@ -57,9 +61,12 @@ func TestGithubSSOBindsBrowserAndPKCE(t *testing.T) {
 		t.Fatal("unexpected state lifetime or PKCE configuration")
 	}
 	c, w := githubContext("https://open-box.example/callback?state="+v.Get("state"), cookie)
-	verifier, err := consumeGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect)
+	method, verifier, err := consumeGithubSSO(c, "test-client", testGithubRedirect)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if method != "get_sso_id" {
+		t.Fatalf("unexpected callback method %q", method)
 	}
 	digest := sha256.Sum256([]byte(verifier))
 	if v.Get("code_challenge") != base64.RawURLEncoding.EncodeToString(digest[:]) {
@@ -68,7 +75,7 @@ func TestGithubSSOBindsBrowserAndPKCE(t *testing.T) {
 	if w.Result().Cookies()[0].MaxAge != -1 {
 		t.Fatal("callback did not clear browser binding")
 	}
-	if _, err := consumeGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect); err == nil {
+	if _, _, err := consumeGithubSSO(c, "test-client", testGithubRedirect); err == nil {
 		t.Fatal("replayed callback accepted")
 	}
 }
@@ -78,7 +85,7 @@ func TestGithubSSORejectsForeignExpiredAndAlteredFlows(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			v, cookie := beginTestGithub(t)
 			copyCookie := *cookie
-			client, method, redirect := "test-client", "get_sso_id", testGithubRedirect
+			client, redirect := "test-client", testGithubRedirect
 			switch kind {
 			case "missing-cookie":
 				cookie = nil
@@ -88,15 +95,19 @@ func TestGithubSSORejectsForeignExpiredAndAlteredFlows(t *testing.T) {
 			case "client":
 				client = "foreign-client"
 			case "method":
-				method = "sso_get_token"
+				copyCookie.Name = githubSSOCookie("sso_get_token")
+				cookie = &copyCookie
 			case "redirect":
 				redirect = "https://foreign.example/callback"
 			case "expired":
-				a, _ := githubSSOAttempts.Get(v.Get("state"))
-				githubSSOAttempts.Set(v.Get("state"), a, cache.WithEx[githubSSOAttempt](-time.Second))
+				githubSSOAttemptsMu.Lock()
+				a := githubSSOAttempts[v.Get("state")]
+				a.ExpiresAt = time.Now().Add(-time.Second)
+				githubSSOAttempts[v.Get("state")] = a
+				githubSSOAttemptsMu.Unlock()
 			}
 			c, _ := githubContext("https://open-box.example/callback?state="+v.Get("state"), cookie)
-			if _, err := consumeGithubSSO(c, client, method, redirect); err == nil {
+			if _, _, err := consumeGithubSSO(c, client, redirect); err == nil {
 				t.Fatal("invalid callback accepted")
 			}
 		})
@@ -118,7 +129,7 @@ func TestGithubSSOConcurrentCallbacksExchangeOnlyOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			c, _ := githubContext("https://open-box.example/callback?state="+v.Get("state"), cookie)
-			if _, err := consumeGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect); err == nil {
+			if _, _, err := consumeGithubSSO(c, "test-client", testGithubRedirect); err == nil {
 				successful.Add(1)
 			}
 		}()
@@ -126,6 +137,30 @@ func TestGithubSSOConcurrentCallbacksExchangeOnlyOnce(t *testing.T) {
 	wg.Wait()
 	if successful.Load() != 1 {
 		t.Fatalf("accepted %d callbacks", successful.Load())
+	}
+}
+
+func TestGithubSSOAttemptStoreIsBounded(t *testing.T) {
+	githubSSOAttemptsMu.Lock()
+	githubSSOAttempts = make(map[string]githubSSOAttempt, githubSSOAttemptLimit)
+	for i := range githubSSOAttemptLimit {
+		githubSSOAttempts[fmt.Sprintf("state-%d", i)] = githubSSOAttempt{ExpiresAt: time.Now().Add(stateExpire)}
+	}
+	githubSSOAttemptsMu.Unlock()
+	t.Cleanup(func() {
+		githubSSOAttemptsMu.Lock()
+		githubSSOAttempts = make(map[string]githubSSOAttempt)
+		githubSSOAttemptsMu.Unlock()
+	})
+	c, _ := githubContext("https://open-box.example/api/auth/sso?method=get_sso_id", nil)
+	if err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, url.Values{}); err == nil {
+		t.Fatal("unbounded SSO attempt accepted")
+	}
+	githubSSOAttemptsMu.Lock()
+	githubSSOAttempts["state-0"] = githubSSOAttempt{ExpiresAt: time.Now().Add(-time.Second)}
+	githubSSOAttemptsMu.Unlock()
+	if err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, url.Values{}); err != nil {
+		t.Fatalf("expired attempt did not release capacity: %v", err)
 	}
 }
 
@@ -171,7 +206,7 @@ func TestGithubSSOHandlersValidateStateBeforeProviderAndSendPKCE(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	}))
-	missing, denied := githubContext("https://open-box.example/api/auth/sso_callback?method=get_sso_id&code=test-only-code", nil)
+	missing, denied := githubContext("https://open-box.example/api/auth/sso_callback?code=test-only-code", nil)
 	SSOLoginCallback(missing)
 	var envelope struct {
 		Code int `json:"code"`
@@ -192,7 +227,10 @@ func TestGithubSSOHandlersValidateStateBeforeProviderAndSendPKCE(t *testing.T) {
 		t.Fatal("redirect missing protected state")
 	}
 	expectedChallenge = authorization.Query().Get("code_challenge")
-	callback, completed := githubContext("https://open-box.example/api/auth/sso_callback?method=get_sso_id&code=test-only-code&state="+authorization.Query().Get("state"), started.Result().Cookies()[0])
+	if authorization.Query().Get("redirect_uri") != testGithubRedirect {
+		t.Fatal("GitHub authorization used a query-bearing callback")
+	}
+	callback, completed := githubContext("https://open-box.example/api/auth/sso_callback?code=test-only-code&state="+authorization.Query().Get("state"), started.Result().Cookies()[0])
 	SSOLoginCallback(callback)
 	if calls != 2 || !strings.Contains(completed.Body.String(), `"sso_id":"123"`) {
 		t.Fatal("protected callback did not complete identity flow")
@@ -222,7 +260,7 @@ func TestGithubSSOProviderErrorsNeverReturnIdentity(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			}))
 			v, cookie := beginTestGithub(t)
-			c, w := githubContext("https://open-box.example/api/auth/sso_callback?method=get_sso_id&code=test-only-code&state="+v.Get("state"), cookie)
+			c, w := githubContext("https://open-box.example/api/auth/sso_callback?code=test-only-code&state="+v.Get("state"), cookie)
 			SSOLoginCallback(c)
 			var envelope struct {
 				Code int `json:"code"`

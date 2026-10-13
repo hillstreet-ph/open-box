@@ -10,21 +10,36 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/OpenListTeam/go-cache"
 	"github.com/gin-gonic/gin"
 )
 
 type githubSSOAttempt struct {
 	ClientID, Method, RedirectURI, Verifier, BrowserID string
+	ExpiresAt                                          time.Time
 }
 
-var githubSSOAttempts = cache.NewMemCache[githubSSOAttempt]()
-var githubSSOConsumeMu sync.Mutex
+const githubSSOAttemptLimit = 1024
+
+var githubSSOAttempts = make(map[string]githubSSOAttempt)
+var githubSSOAttemptsMu sync.Mutex
 
 func githubSSOCookie(method string) string { return "__Host-openbox-github-sso-" + method }
+
+func githubSSORedirectURI(c *gin.Context) string {
+	return common.GetApiUrl(c) + "/api/auth/sso_callback"
+}
+
+func purgeExpiredGithubSSOAttempts(now time.Time) {
+	for state, attempt := range githubSSOAttempts {
+		if !attempt.ExpiresAt.After(now) {
+			delete(githubSSOAttempts, state)
+		}
+	}
+}
 
 func beginGithubSSO(c *gin.Context, clientID, method, redirectURI string, values url.Values) error {
 	if method != "sso_get_token" && method != "get_sso_id" {
@@ -35,7 +50,14 @@ func beginGithubSSO(c *gin.Context, clientID, method, redirectURI string, values
 		return errors.New("GitHub SSO requires a client ID and canonical HTTPS callback")
 	}
 	state, verifier, browserID := random.String(43), random.String(64), random.String(43)
-	githubSSOAttempts.Set(state, githubSSOAttempt{ClientID: clientID, Method: method, RedirectURI: redirectURI, Verifier: verifier, BrowserID: browserID}, cache.WithEx[githubSSOAttempt](stateExpire))
+	githubSSOAttemptsMu.Lock()
+	purgeExpiredGithubSSOAttempts(time.Now())
+	if len(githubSSOAttempts) >= githubSSOAttemptLimit {
+		githubSSOAttemptsMu.Unlock()
+		return errors.New("too many pending GitHub SSO attempts")
+	}
+	githubSSOAttempts[state] = githubSSOAttempt{ClientID: clientID, Method: method, RedirectURI: redirectURI, Verifier: verifier, BrowserID: browserID, ExpiresAt: time.Now().Add(stateExpire)}
+	githubSSOAttemptsMu.Unlock()
 	challenge := sha256.Sum256([]byte(verifier))
 	values.Set("state", state)
 	values.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
@@ -46,23 +68,27 @@ func beginGithubSSO(c *gin.Context, clientID, method, redirectURI string, values
 	return nil
 }
 
-func consumeGithubSSO(c *gin.Context, clientID, method, redirectURI string) (string, error) {
+func consumeGithubSSO(c *gin.Context, clientID, redirectURI string) (string, string, error) {
 	state := c.Query("state")
-	browserID, err := c.Cookie(githubSSOCookie(method))
-	if err != nil || state == "" || browserID == "" {
-		return "", errors.New("missing SSO browser state")
+	if state == "" {
+		return "", "", errors.New("missing SSO browser state")
 	}
-	githubSSOConsumeMu.Lock()
-	defer githubSSOConsumeMu.Unlock()
-	attempt, ok := githubSSOAttempts.Get(state)
-	if !ok || attempt.ClientID != clientID || attempt.Method != method || attempt.RedirectURI != redirectURI || subtle.ConstantTimeCompare([]byte(attempt.BrowserID), []byte(browserID)) != 1 {
-		return "", errors.New("incorrect or expired SSO browser state")
+	githubSSOAttemptsMu.Lock()
+	defer githubSSOAttemptsMu.Unlock()
+	purgeExpiredGithubSSOAttempts(time.Now())
+	attempt, ok := githubSSOAttempts[state]
+	if !ok || attempt.ClientID != clientID || attempt.RedirectURI != redirectURI || (attempt.Method != "sso_get_token" && attempt.Method != "get_sso_id") {
+		return "", "", errors.New("incorrect or expired SSO browser state")
+	}
+	browserID, err := c.Cookie(githubSSOCookie(attempt.Method))
+	if err != nil || browserID == "" || subtle.ConstantTimeCompare([]byte(attempt.BrowserID), []byte(browserID)) != 1 {
+		return "", "", errors.New("incorrect or expired SSO browser state")
 	}
 	// Atomic removal permits only one token exchange, including concurrent callbacks.
-	githubSSOAttempts.Del(state)
+	delete(githubSSOAttempts, state)
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(githubSSOCookie(method), "", -1, "/", "", true, true)
-	return attempt.Verifier, nil
+	c.SetCookie(githubSSOCookie(attempt.Method), "", -1, "/", "", true, true)
+	return attempt.Method, attempt.Verifier, nil
 }
 
 func githubSSOMessage(c *gin.Context, field, value string) {

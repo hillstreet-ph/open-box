@@ -4,16 +4,15 @@ The GitHub handler requires HTTPS, popup mode (SSO compatibility mode off), brow
 
 ## Deployment settings
 
-Keep password sign-in available. In the `box-open` GitHub App settings register both callbacks:
+Keep password sign-in available. In the `box-open` GitHub App settings register this queryless callback:
 
-- `https://open-box.space/api/auth/sso_callback?method=sso_get_token`
-- `https://open-box.space/api/auth/sso_callback?method=get_sso_id`
+- `https://open-box.space/api/auth/sso_callback`
 
 Configure platform `Github`, the App's OAuth client ID and client secret through protected settings. App private keys are different credentials. The username key, organization, application and endpoint fields are not used by the GitHub provider; changing them does not repair GitHub callbacks. Rotate the client secret exposed in the supplied screenshots through GitHub's secure credential interface, then update the protected native setting. Do not copy the secret into source, issues or logs.
 
 On 2026-10-10 production SSO login, automatic registration and compatibility mode were switched off while this patch is validated. The existing native administrator remains linked to numeric GitHub user ID `297973909`. Do not replace it with a Supabase UUID. Supabase MCP OAuth is a separate identity flow; preserve the shared project's Open-Connect Site URL.
 
-State is held in process memory. A restart rejects in-flight sign-ins. Multiple replicas must route authorization and callback to the same instance; use a shared atomic state store before removing that constraint.
+State is held in a bounded process-memory store with at most 1,024 pending attempts and a five-minute lifetime. A restart rejects in-flight sign-ins. Multiple replicas must route authorization and callback to the same instance; use a shared atomic state store before removing that constraint.
 
 ## Release verification
 
