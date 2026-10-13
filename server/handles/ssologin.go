@@ -84,7 +84,11 @@ func SSOLoginRedirect(c *gin.Context) {
 			return
 		}
 		if err := beginGithubSSO(c, clientId, method, redirectUri, urlValues); err != nil {
-			common.ErrorResp(c, err, 400)
+			status := http.StatusBadRequest
+			if errors.Is(err, errGithubSSORateLimited) {
+				status = http.StatusTooManyRequests
+			}
+			common.ErrorResp(c, err, status)
 			return
 		}
 		rUrl = "https://github.com/login/oauth/authorize?"

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +40,7 @@ func githubContext(target string, cookie *http.Cookie) (*gin.Context, *httptest.
 
 func beginTestGithub(t *testing.T) (url.Values, *http.Cookie) {
 	t.Helper()
+	resetGithubAdmission(t)
 	c, w := githubContext("https://open-box.example/api/auth/sso?method=get_sso_id", nil)
 	v := url.Values{}
 	if err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, v); err != nil {
@@ -50,6 +52,19 @@ func beginTestGithub(t *testing.T) (url.Values, *http.Cookie) {
 		githubSSOAttemptsMu.Unlock()
 	})
 	return v, w.Result().Cookies()[0]
+}
+
+func resetGithubAdmission(t *testing.T) {
+	t.Helper()
+	githubSSOAttemptsMu.Lock()
+	previous := githubSSOAdmission
+	githubSSOAdmission = [4096]githubSSOAdmissionBucket{}
+	githubSSOAttemptsMu.Unlock()
+	t.Cleanup(func() {
+		githubSSOAttemptsMu.Lock()
+		githubSSOAdmission = previous
+		githubSSOAttemptsMu.Unlock()
+	})
 }
 
 func TestGithubSSOBindsBrowserAndPKCE(t *testing.T) {
@@ -95,8 +110,11 @@ func TestGithubSSORejectsForeignExpiredAndAlteredFlows(t *testing.T) {
 			case "client":
 				client = "foreign-client"
 			case "method":
-				copyCookie.Name = githubSSOCookie("sso_get_token")
-				cookie = &copyCookie
+				githubSSOAttemptsMu.Lock()
+				a := githubSSOAttempts[v.Get("state")]
+				a.Method = "invalid-method"
+				githubSSOAttempts[v.Get("state")] = a
+				githubSSOAttemptsMu.Unlock()
 			case "redirect":
 				redirect = "https://foreign.example/callback"
 			case "expired":
@@ -141,6 +159,7 @@ func TestGithubSSOConcurrentCallbacksExchangeOnlyOnce(t *testing.T) {
 }
 
 func TestGithubSSOAttemptStoreIsBounded(t *testing.T) {
+	resetGithubAdmission(t)
 	githubSSOAttemptsMu.Lock()
 	githubSSOAttempts = make(map[string]githubSSOAttempt, githubSSOAttemptLimit)
 	for i := range githubSSOAttemptLimit {
@@ -164,6 +183,129 @@ func TestGithubSSOAttemptStoreIsBounded(t *testing.T) {
 	}
 }
 
+func TestGithubSSOInitiationFloodCannotFillTheGlobalStore(t *testing.T) {
+	resetGithubAdmission(t)
+	githubSSOAttemptsMu.Lock()
+	previous := githubSSOAttempts
+	githubSSOAttempts = make(map[string]githubSSOAttempt)
+	githubSSOAttemptsMu.Unlock()
+	t.Cleanup(func() {
+		githubSSOAttemptsMu.Lock()
+		githubSSOAttempts = previous
+		githubSSOAttemptsMu.Unlock()
+	})
+	accepted := 0
+	for i := range githubSSOAttemptLimit {
+		c, w := githubContext("https://open-box.example/api/auth/sso?method=get_sso_id", nil)
+		c.Request.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i%250+1))
+		c.Request.Header.Set("X-Real-IP", fmt.Sprintf("203.0.113.%d", i%250+1))
+		err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, url.Values{})
+		if err == nil {
+			accepted++
+		} else if !errors.Is(err, errGithubSSORateLimited) || w.Header().Get("Retry-After") != "5" || len(w.Result().Cookies()) != 0 {
+			t.Fatalf("unexpected flood rejection: %v", err)
+		}
+	}
+	if accepted != githubSSOAdmissionBurst || len(githubSSOAttempts) != githubSSOAdmissionBurst {
+		t.Fatalf("flood allocated %d attempts", accepted)
+	}
+	c, _ := githubContext("https://open-box.example/api/auth/sso?method=get_sso_id", nil)
+	c.Request.RemoteAddr = "192.0.2.2:1234"
+	if err := beginGithubSSO(c, "test-client", "get_sso_id", testGithubRedirect, url.Values{}); err != nil {
+		t.Fatalf("one peer denied an unrelated sign-in: %v", err)
+	}
+}
+
+func TestGithubSSOAdmissionRefillsWithinFixedMemory(t *testing.T) {
+	resetGithubAdmission(t)
+	githubSSOAttemptsMu.Lock()
+	defer githubSSOAttemptsMu.Unlock()
+	now := time.Now()
+	for range githubSSOAdmissionBurst {
+		if !admitGithubSSO("192.0.2.1", now) {
+			t.Fatal("initial burst denied")
+		}
+	}
+	if admitGithubSSO("192.0.2.1", now.Add(githubSSOAdmissionInterval-time.Millisecond)) {
+		t.Fatal("admission refilled too early")
+	}
+	if !admitGithubSSO("192.0.2.1", now.Add(githubSSOAdmissionInterval)) || admitGithubSSO("192.0.2.1", now.Add(githubSSOAdmissionInterval)) {
+		t.Fatal("admission did not refill exactly one attempt")
+	}
+	for i := range 10000 {
+		admitGithubSSO(fmt.Sprintf("peer-%d", i), now)
+	}
+	if len(githubSSOAdmission) != 4096 {
+		t.Fatal("admission bookkeeping grew with peer count")
+	}
+}
+
+func TestGithubSSOInitiationHandlerReportsRateLimit(t *testing.T) {
+	resetGithubAdmission(t)
+	previous := op.Cache
+	op.Cache = op.NewCacheManager()
+	states := []string{}
+	t.Cleanup(func() {
+		op.Cache = previous
+		githubSSOAttemptsMu.Lock()
+		for _, state := range states {
+			delete(githubSSOAttempts, state)
+		}
+		githubSSOAttemptsMu.Unlock()
+	})
+	for key, value := range map[string]string{conf.SSOLoginEnabled: "true", conf.SSOLoginPlatform: "Github", conf.SSOClientId: "test-client", conf.SSOCompatibilityMode: "false"} {
+		op.Cache.SetSetting(key, &model.SettingItem{Key: key, Value: value})
+	}
+	for range githubSSOAdmissionBurst {
+		c, w := githubContext("https://open-box.example/api/auth/sso?method=sso_get_token", nil)
+		SSOLoginRedirect(c)
+		redirect, err := url.Parse(w.Header().Get("Location"))
+		if err != nil || w.Code != http.StatusFound || redirect.Query().Get("state") == "" {
+			t.Fatal("expected initial authorization redirect")
+		}
+		states = append(states, redirect.Query().Get("state"))
+	}
+	c, w := githubContext("https://open-box.example/api/auth/sso?method=sso_get_token", nil)
+	SSOLoginRedirect(c)
+	var envelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil || envelope.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "5" || w.Header().Get("Location") != "" {
+		t.Fatalf("incorrect admission rejection: %s", w.Body.String())
+	}
+}
+
+func TestGithubSSOSameMethodPopupsRetainIndependentBindings(t *testing.T) {
+	for _, method := range []string{"get_sso_id", "sso_get_token"} {
+		t.Run(method, func(t *testing.T) {
+			resetGithubAdmission(t)
+			values := []url.Values{{}, {}}
+			cookies := make([]*http.Cookie, 2)
+			for i := range values {
+				c, w := githubContext("https://open-box.example/api/auth/sso?method="+method, nil)
+				if err := beginGithubSSO(c, "test-client", method, testGithubRedirect, values[i]); err != nil {
+					t.Fatal(err)
+				}
+				cookies[i] = w.Result().Cookies()[0]
+			}
+			if cookies[0].Name == cookies[1].Name {
+				t.Fatal("second popup overwrote the first binding")
+			}
+			// The browser sends both cookies after starting both popups.
+			for i, v := range values {
+				c, w := githubContext("https://open-box.example/callback?state="+v.Get("state"), cookies[0])
+				c.Request.AddCookie(cookies[1])
+				if got, _, err := consumeGithubSSO(c, "test-client", testGithubRedirect); err != nil || got != method {
+					t.Fatalf("popup %d rejected: %v", i, err)
+				}
+				if cleared := w.Result().Cookies()[0]; cleared.Name != cookies[i].Name || cleared.MaxAge != -1 {
+					t.Fatal("callback cleared another popup's binding")
+				}
+			}
+		})
+	}
+}
+
 func TestGithubSSOResponseRestrictsOriginAndEscapesValues(t *testing.T) {
 	c, w := githubContext("https://open-box.example/callback", nil)
 	githubSSOMessage(c, "sso_id", `</script><script>alert(1)</script>`)
@@ -181,6 +323,7 @@ type githubRoundTrip func(*http.Request) (*http.Response, error)
 func (fn githubRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return fn(r) }
 
 func TestGithubSSOHandlersValidateStateBeforeProviderAndSendPKCE(t *testing.T) {
+	resetGithubAdmission(t)
 	oldCache, oldClient := op.Cache, githubSSOClient
 	op.Cache = op.NewCacheManager()
 	t.Cleanup(func() { op.Cache = oldCache; githubSSOClient = oldClient })

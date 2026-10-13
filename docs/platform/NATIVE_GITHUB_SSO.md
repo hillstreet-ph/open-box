@@ -12,7 +12,9 @@ Configure platform `Github`, the App's OAuth client ID and client secret through
 
 On 2026-10-10 production SSO login, automatic registration and compatibility mode were switched off while this patch is validated. The existing native administrator remains linked to numeric GitHub user ID `297973909`. Do not replace it with a Supabase UUID. Supabase MCP OAuth is a separate identity flow; preserve the shared project's Open-Connect Site URL.
 
-State is held in a bounded process-memory store with at most 1,024 pending attempts and a five-minute lifetime. A restart rejects in-flight sign-ins. Multiple replicas must route authorization and callback to the same instance; use a shared atomic state store before removing that constraint.
+State is held in a bounded process-memory store with at most 1,024 pending attempts and a five-minute lifetime. Initiation admission uses a fixed 4,096-bucket limiter keyed on the actual transport peer, with eight immediate attempts and one additional attempt every five seconds. A 1,024-request burst from one peer cannot fill the pending store, even with forged forwarding headers; rejected initiations return code 429 and Retry-After. Each attempt has its own Secure/HttpOnly/SameSite=Lax cookie named by state, so simultaneous same-method popups retain separate bindings and a callback clears only its own cookie.
+
+Transport-peer limiting is deliberately independent of forwarded headers because the application's default proxy trust does not authenticate those headers. Peers that share a reverse proxy can share a quota, and hash collisions conservatively share a bucket. The public edge should additionally apply per-client SSO rate limits using its authenticated client attribution; the native limiter does not claim protection against distributed denial of service. A restart rejects in-flight sign-ins. Multiple replicas must route authorization and callback to the same instance; use a shared atomic state store before removing that constraint.
 
 ## Release verification
 
