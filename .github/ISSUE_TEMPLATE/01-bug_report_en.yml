@@ -14,7 +14,7 @@ body:
       label: Please confirm the following
       description: |
         You must read, check, confirm, and agree to all the following, otherwise your issue will definitely be closed directly.
-        Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
+        Or you can go to the [discussions](https://github.com/hillstreet-ph/open-box/discussions).
       options:
         - label: |
             I have read and agree to [AGPL-3.0 Section 15](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.) .
@@ -25,13 +25,13 @@ body:
         - label: |
             I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
         - label: |
-            I have read the [OpenList documentation](https://doc.oplist.org).
+            I have read the [Open-Box documentation](https://github.com/hillstreet-ph/open-box/blob/main/README.md).
         - label: |
             I confirm there are no duplicate issues or discussions.
         - label: |
-            I confirm this is an `OpenList` issue, not caused by other reasons (such as [network](https://doc.oplist.org/faq/howto#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host-1), dependencies, or operation).
+            I confirm this is an `Open-Box` issue, not caused by other reasons (such as [network](https://doc.oplist.org/faq/howto#tls-handshake-timeout-read-connection-reset-by-peer-dns-lookup-failed-connect-connection-refused-client-timeout-exceeded-while-awaiting-headers-no-such-host-1), dependencies, or operation).
         - label: |
-            I believe this issue must be handled by `OpenList` and not by a third party.
+            I believe this issue must be handled by `Open-Box` and not by a third party.
         - label: |
             I confirm this issue is not fixed in the latest version.
         - label: |
@@ -39,7 +39,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: OpenList Version (required)
+      label: Open-Box Version (required)
       description: |
         What version of the software are you using? Please do not use `latest` or `master` as the answer.
       placeholder: v4.xx.xx
@@ -73,7 +73,7 @@ body:
     attributes:
       label: Configuration File Content (required)
       description: |
-        Please provide your `OpenList` application's configuration file and a screenshot of the relevant storage configuration. (You may mask sensitive fields)
+        Please provide your `Open-Box` application's configuration file and a screenshot of the relevant storage configuration. (You may mask sensitive fields)
     validations:
       required: true
   - type: textarea

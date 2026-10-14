@@ -2,7 +2,7 @@
 
 ## Setup your machine
 
-`OpenList` is written in [Go](https://golang.org/) and [SolidJS](https://www.solidjs.com/).
+`Open-Box` is built on the OpenList engine and is written in [Go](https://golang.org/) and [SolidJS](https://www.solidjs.com/).
 
 Prerequisites:
 
@@ -13,11 +13,11 @@ Prerequisites:
 
 ## Cloning a fork
 
-Fork and clone `OpenList` and `OpenList-Frontend` anywhere:
+Fork and clone `hillstreet-ph/open-box`. If you need to develop the upstream frontend separately, clone `OpenListTeam/OpenList-Frontend` as well:
 
 ```shell
-git clone https://github.com/<your-username>/OpenList.git
-git clone --recurse-submodules https://github.com/<your-username>/OpenList-Frontend.git
+git clone https://github.com/<your-username>/open-box.git
+git clone --recurse-submodules https://github.com/OpenListTeam/OpenList-Frontend.git
 ```
 
 ## Creating a branch
@@ -70,7 +70,7 @@ It's suggested to sign your commits. See: [How to sign commits](https://docs.git
 
 Please make sure your code has been formatted with `go fmt` or [prettier](https://prettier.io/) before submitting.
 
-Push your branch to your `openlist` fork and open a pull request against the `main` branch.
+Push your branch to your `open-box` fork and open a pull request against the `main` branch.
 
 ## Merge your pull request
 
@@ -107,4 +107,4 @@ Minor AI assistance, such as typo fixes, autocomplete, formatting suggestions, o
 
 ---
 
-Thank you for your contribution! Let's make OpenList better together!
+Thank you for your contribution! Let's make Open-Box better together!

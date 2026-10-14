@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Only the latest stable release receives security patches. We strongly recommend always keeping OpenList up to date.
+Only the latest stable release receives security patches. We strongly recommend always keeping Open-Box up to date.
 
 | Version              | Supported          |
 | -------------------- | ------------------ |
@@ -13,10 +13,11 @@ Only the latest stable release receives security patches. We strongly recommend 
 
 **Please do NOT report security vulnerabilities through public GitHub Issues.**
 
-If you discover a security vulnerability in OpenList, please report it responsibly by using one of the following channels:
+If you discover a security vulnerability in Open-Box, please report it responsibly by using one of the following channels:
 
-- **GitHub Private Security Advisory** (preferred): [Submit here](https://github.com/OpenListTeam/OpenList/security/advisories/new)
-- **Telegram**: Contact a maintainer privately via [@OpenListTeam](https://t.me/OpenListTeam)
+- **GitHub Private Security Advisory** (preferred): [Submit here](https://github.com/hillstreet-ph/open-box/security/advisories/new)
+
+For vulnerabilities specific to the upstream OpenList engine, you may also use the [upstream private reporting channel](https://github.com/OpenListTeam/OpenList/security/advisories/new).
 
 When reporting, please include as much of the following as possible:
 
@@ -28,11 +29,11 @@ When reporting, please include as much of the following as possible:
 
 ## Security Best Practices for Users
 
-To keep your OpenList instance secure:
+To keep your Open-Box instance secure:
 
 - Always update to the latest release.
 - Use a strong, unique admin password and change it after first login.
-- Enable HTTPS (TLS) for your deployment — do **not** expose OpenList over plain HTTP on the public internet.
+- Enable HTTPS (TLS) for your deployment — do **not** expose Open-Box over plain HTTP on the public internet.
 - Limit exposed ports using a reverse proxy (e.g., Nginx, Caddy).
 - Set up access controls and avoid enabling guest access unless necessary.
 - Regularly review mounted storage permissions and revoke unused API tokens.
@@ -40,7 +41,7 @@ To keep your OpenList instance secure:
 
 ## Acknowledgments
 
-We sincerely thank all security researchers and community members who responsibly disclose vulnerabilities and help make OpenList safer for everyone.
+We sincerely thank all security researchers and community members who responsibly disclose vulnerabilities and help make Open-Box safer for everyone.
 
 ---
 
@@ -48,7 +49,7 @@ We sincerely thank all security researchers and community members who responsibl
 
 ## 支持的版本
 
-我们仅对最新稳定版本提供安全补丁。强烈建议始终保持 OpenList 为最新版本。
+我们仅对最新稳定版本提供安全补丁。强烈建议始终保持 Open-Box 为最新版本。
 
 | 版本               | 是否支持           |
 | ------------------ | ------------------ |
@@ -59,10 +60,11 @@ We sincerely thank all security researchers and community members who responsibl
 
 **请勿通过公开的 GitHub Issues 报告安全漏洞。**
 
-如果您在 OpenList 中发现安全漏洞，请通过以下渠道之一负责任地进行报告：
+如果您在 Open-Box 中发现安全漏洞，请通过以下渠道之一负责任地进行报告：
 
-- **GitHub 私密安全公告**（推荐）：[点击提交](https://github.com/OpenListTeam/OpenList/security/advisories/new)
-- **Telegram**：通过 [@OpenListTeam](https://t.me/OpenListTeam) 私信联系维护者
+- **GitHub 私密安全公告**（推荐）：[点击提交](https://github.com/hillstreet-ph/open-box/security/advisories/new)
+
+如果漏洞仅涉及上游 OpenList 引擎，也可通过[上游私密报告渠道](https://github.com/OpenListTeam/OpenList/security/advisories/new)报告。
 
 报告时，请尽量提供以下信息：
 
@@ -74,11 +76,11 @@ We sincerely thank all security researchers and community members who responsibl
 
 ## 用户安全最佳实践
 
-为保障您的 OpenList 实例安全：
+为保障您的 Open-Box 实例安全：
 
 - 始终更新至最新版本。
 - 使用强且唯一的管理员密码，并在首次登录后立即修改。
-- 为您的部署启用 HTTPS（TLS）—— **请勿**在公网上以明文 HTTP 方式暴露 OpenList。
+- 为您的部署启用 HTTPS（TLS）—— **请勿**在公网上以明文 HTTP 方式暴露 Open-Box。
 - 使用反向代理（如 Nginx、Caddy）限制对外暴露的端口。
 - 配置访问控制，非必要情况下不要开启访客访问。
 - 定期检查已挂载存储的权限，并撤销未使用的 API 令牌。
@@ -86,4 +88,4 @@ We sincerely thank all security researchers and community members who responsibl
 
 ## 致谢
 
-我们衷心感谢所有负责任地披露漏洞、帮助 OpenList 变得更加安全的安全研究人员和社区成员。
+我们衷心感谢所有负责任地披露漏洞、帮助 Open-Box 变得更加安全的安全研究人员和社区成员。
