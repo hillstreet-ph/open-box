@@ -24,8 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || 'openlistteam' }}
-  IMAGE_NAME: openlist-git
+  GHCR_ORG_NAME: ${{ vars.GHCR_ORG_NAME || 'hillstreet-ph' }}
+  IMAGE_NAME: open-box
   REGISTRY: ghcr.io
   ARTIFACT_NAME: 'binaries_docker_release'
   ARTIFACT_NAME_LITE: 'binaries_docker_release_lite'

@@ -90,5 +90,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: openlist_${{ steps.short-sha.outputs.sha }}_${{ matrix.target }}
+          name: openbox_${{ steps.short-sha.outputs.sha }}_${{ matrix.target }}
           path: build/*
