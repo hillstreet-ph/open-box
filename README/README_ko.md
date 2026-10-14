@@ -1,16 +1,19 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
+  <h1>Open-Box</h1>
+  <img src="https://open-box.space/open-box-brand.svg" width="128" height="128" alt="Open-Box logo" />
 
-  <p><em>OpenList는 신뢰 기반 공격으로부터 오픈 소스를 보호하기 위해 만들어진, 탄력적이고 장기 거버넌스를 지향하는 커뮤니티 주도 AList 포크입니다.</em></p>
+  <p><em>HillStreet's managed storage gateway, powered by the OpenList engine.</em></p>
 
-  <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
-  <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/actions?query=workflow%3ABuild"><img src="https://img.shields.io/github/actions/workflow/status/OpenListTeam/OpenList/build.yml?branch=main" alt="Build status" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/release/OpenListTeam/OpenList" alt="latest version" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/blob/main/LICENSE"><img src="https://img.shields.io/github/license/hillstreet-ph/open-box" alt="License" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/actions"><img src="https://img.shields.io/github/actions/workflow/status/hillstreet-ph/open-box/build.yml?branch=main" alt="Build status" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/releases"><img src="https://img.shields.io/github/v/release/hillstreet-ph/open-box" alt="latest version" /></a>
 
-  <a href="https://github.com/OpenListTeam/OpenList/discussions"><img src="https://img.shields.io/github/discussions/OpenListTeam/OpenList?color=%23ED8936" alt="discussions" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/downloads/OpenListTeam/OpenList/total?color=%239F7AEA&logo=github" alt="Downloads" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/discussions"><img src="https://img.shields.io/github/discussions/hillstreet-ph/open-box?color=%237C3AED" alt="discussions" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/releases"><img src="https://img.shields.io/github/downloads/hillstreet-ph/open-box/total?color=%237C3AED&logo=github" alt="Downloads" /></a>
 </div>
+
+> Open-Box is maintained by HillStreet. The upstream OpenList notices below are retained for attribution and AGPL-3.0 compliance.
+
 
 ---
 
@@ -105,7 +108,7 @@ OpenList has no official association with third-party derivative projects that u
 
 ## 토론
 
-Please refer to [Discussions](https://github.com/OpenListTeam/OpenList/discussions) for general questions; Issues are for bug reports and feature requests only.
+Please refer to [Discussions](https://github.com/hillstreet-ph/open-box/discussions) for general questions; Issues are for bug reports and feature requests only.
 
 ## 후원
 
@@ -121,7 +124,7 @@ Thanks to the following donors for their generous support:
 
 ## 라이선스
 
-OpenList is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
+Open-Box is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
 
 ## 문의
 

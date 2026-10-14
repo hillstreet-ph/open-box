@@ -48,7 +48,7 @@ func assertFSListInvalidArguments(t *testing.T, raw json.RawMessage) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if err.Code != -32602 || err.Message != "invalid openlist.fs.list arguments" {
+	if err.Code != -32602 || err.Message != "invalid openbox.fs.list arguments" {
 		t.Fatalf("unexpected error: %+v", err)
 	}
 }

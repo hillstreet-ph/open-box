@@ -38,12 +38,13 @@ func (s *Server) handleToolsCall(c *gin.Context, req request) (int, response) {
 		result any
 		err    *rpcError
 	)
+	// Keep legacy invocation names for existing clients; discovery uses Open-Box.
 	switch params.Name {
-	case "openlist.fs.list":
+	case "openbox.fs.list", "openlist.fs.list":
 		result, err = s.callFSList(c, params.Arguments)
-	case "openlist.fs.get":
+	case "openbox.fs.get", "openlist.fs.get":
 		result, err = s.callFSGet(c, params.Arguments)
-	case "openlist.fs.link":
+	case "openbox.fs.link", "openlist.fs.link":
 		result, err = s.callFSLink(c, params.Arguments)
 	default:
 		return http.StatusOK, response{

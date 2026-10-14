@@ -12,6 +12,8 @@ requires its name.
 - Repository: `hillstreet-ph/open-box`
 - Primary color: `#7c3aed`
 - Logo and favicon: `/open-box-brand.svg`
+- MCP discovery names: `openbox.fs.list`, `openbox.fs.get`, `openbox.fs.link`
+- New authenticator enrollment labels and WebDAV authentication realm: Open-Box
 - Public CLI description, MCP titles, FTP banner, torrent metadata, integration
   pages, Docker metadata, and default site settings use Open-Box.
 
@@ -20,6 +22,7 @@ requires its name.
 The following intentionally retain `openlist` and must not be bulk-renamed:
 
 - Go module/import path `github.com/OpenListTeam/OpenList/v4`
+- legacy MCP invocation aliases `openlist.fs.*` (not advertised to new clients)
 - runtime binary `openlist`
 - persistent path `/opt/openlist/data`
 - database tables prefixed `x_`
@@ -40,3 +43,7 @@ The integration registry permits multiple rows per provider using the unique
 key `(user_id, provider, account_key)`. Google API capabilities such as Gmail
 are recorded separately from filesystem collection, even when they use the
 same Google identity.
+
+## Upgrade behavior
+
+MCP tool names are advertised under `openbox.fs.*`; old saved calls continue through the same handlers. Existing authenticator secrets are unchanged; new enrollments display Open-Box. WebDAV clients may ask users to sign in again when the realm label changes. REST paths (`/api/fs/*`, `/api/auth/*`) remain stable and product-neutral. Translated README headers and support links identify the HillStreet distribution; upstream legal notices and contributor credits are retained.

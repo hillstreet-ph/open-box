@@ -97,7 +97,7 @@ func TestToolsListSuccess(t *testing.T) {
 		name, _ := currentTool["name"].(string)
 		names[name] = true
 	}
-	if !names["openlist.fs.list"] || !names["openlist.fs.get"] || !names["openlist.fs.link"] {
+	if !names["openbox.fs.list"] || !names["openbox.fs.get"] || !names["openbox.fs.link"] {
 		t.Fatalf("unexpected tool names: %#v", names)
 	}
 }
@@ -118,7 +118,7 @@ func TestToolsCallUnknownTool(t *testing.T) {
 		"jsonrpc":"2.0",
 		"id":3,
 		"method":"tools/call",
-		"params":{"name":"openlist.fs.unknown","arguments":{"path":"/"}}
+		"params":{"name":"openbox.fs.unknown","arguments":{"path":"/"}}
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
@@ -153,7 +153,7 @@ func TestToolsCallInvalidParams(t *testing.T) {
 		"jsonrpc":"2.0",
 		"id":4,
 		"method":"tools/call",
-		"params":{"name":"openlist.fs.list","arguments":"bad"}
+		"params":{"name":"openbox.fs.list","arguments":"bad"}
 	}`))
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Origin", "http://example.com")
@@ -169,6 +169,59 @@ func TestToolsCallInvalidParams(t *testing.T) {
 	resp := decodeResponse(t, w)
 	if resp.Error != nil {
 		t.Fatalf("expected tool error result, got protocol error: %+v", resp.Error)
+	}
+}
+
+func TestBrandedAndLegacyToolsUseSameValidationAndSessionGate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := newTestServer(map[string]*session{
+		"brand-session": {id: "brand-session", userID: 1, initialized: true},
+	})
+	r := gin.New()
+	r.POST("/mcp", func(c *gin.Context) {
+		common.GinAppendValues(c, conf.UserKey, &model.User{ID: 1, Role: model.ADMIN})
+		srv.handlePost(c)
+	})
+	for _, operation := range []string{"list", "get", "link"} {
+		for _, prefix := range []string{"openbox", "openlist"} {
+			for _, initialized := range []bool{false, true} {
+				name := prefix + ".fs." + operation
+				body, err := json.Marshal(map[string]any{
+					"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+					"params": map[string]any{"name": name, "arguments": "bad"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := httptest.NewRequest(http.MethodPost, "http://example.com/mcp", strings.NewReader(string(body)))
+				req.Header.Set("Accept", "application/json, text/event-stream")
+				req.Header.Set("Origin", "http://example.com")
+				req.Header.Set(ProtocolVersionHeader, ProtocolVersion)
+				if initialized {
+					req.Header.Set(SessionHeader, "brand-session")
+				}
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				resp := decodeResponse(t, w)
+				if !initialized {
+					if w.Code != http.StatusBadRequest || resp.Error == nil {
+						t.Fatalf("%s bypassed session gate: %d %+v", name, w.Code, resp)
+					}
+					continue
+				}
+				if w.Code != http.StatusOK || resp.Error != nil {
+					t.Fatalf("%s did not reach shared handler: %d %+v", name, w.Code, resp)
+				}
+				result := resp.Result.(map[string]any)
+				if result["isError"] != true {
+					t.Fatalf("%s accepted invalid arguments", name)
+				}
+				content := result["content"].([]any)[0].(map[string]any)
+				if content["text"] != "invalid openbox.fs."+operation+" arguments" {
+					t.Fatalf("%s returned unexpected validation: %v", name, content)
+				}
+			}
+		}
 	}
 }
 

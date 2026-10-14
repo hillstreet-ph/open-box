@@ -101,11 +101,11 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 func parseFSGetArgs(raw json.RawMessage) (*fsGetArgs, *rpcError) {
 	args := &fsGetArgs{}
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.get arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.get arguments"}
 	}
 
 	if err := json.Unmarshal(raw, args); err != nil {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.get arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.get arguments"}
 	}
 	if args.Path == "" {
 		return nil, &rpcError{Code: -32602, Message: "path is required"}

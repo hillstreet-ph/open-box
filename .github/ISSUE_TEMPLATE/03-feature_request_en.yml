@@ -8,7 +8,7 @@ body:
       label: Please confirm the following
       description: |
         You must read, check, confirm, and agree to all the following, otherwise your request may be closed directly.
-        Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
+        Or you can go to the [discussions](https://github.com/hillstreet-ph/open-box/discussions).
       options:
         - label: |
             I have read and agree to [AGPL-3.0 Section 15](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.).
@@ -19,11 +19,11 @@ body:
         - label: |
             I confirm my description is clear, polite, helps developers quickly locate the issue, and complies with community rules.
         - label: |
-            I have read the [OpenList documentation](https://doc.oplist.org).
+            I have read the [Open-Box documentation](https://github.com/hillstreet-ph/open-box/blob/main/README.md).
         - label: |
             I confirm there are no duplicate issues or discussions.
         - label: |
-            I believe this issue must be handled by `OpenList` and not by a third party.
+            I believe this issue must be handled by `Open-Box` and not by a third party.
         - label: |
             I confirm this feature has not been implemented yet.
         - label: |

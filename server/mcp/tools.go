@@ -24,9 +24,9 @@ type toolsListParams struct {
 	Cursor string `json:"cursor,omitempty"`
 }
 
-var openListTools = []tool{
+var openBoxTools = []tool{
 	{
-		Name:        "openlist.fs.list",
+		Name:        "openbox.fs.list",
 		Title:       "Open-Box Files List",
 		Description: "List files and directories under a mount path that the current user can access.",
 		InputSchema: toolInputSchema{
@@ -57,7 +57,7 @@ var openListTools = []tool{
 		},
 	},
 	{
-		Name:        "openlist.fs.get",
+		Name:        "openbox.fs.get",
 		Title:       "Open-Box Files Get",
 		Description: "Get file or directory details for a mount path that the current user can access.",
 		InputSchema: toolInputSchema{
@@ -76,7 +76,7 @@ var openListTools = []tool{
 		},
 	},
 	{
-		Name:        "openlist.fs.link",
+		Name:        "openbox.fs.link",
 		Title:       "Open-Box Files Link",
 		Description: "Return usable link information for a file path that the current user can access.",
 		InputSchema: toolInputSchema{
@@ -116,7 +116,7 @@ func (s *Server) handleToolsList(req request) response {
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
-			"tools": openListTools,
+			"tools": openBoxTools,
 		},
 	}
 }

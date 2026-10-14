@@ -60,8 +60,8 @@ jobs:
               return;
             }
             if (confirmHasRead) {
-              comment = "感谢您联系OpenList。我们会尽快回复您。\n";
-              comment += "Thanks for contacting OpenList. We will reply to you as soon as possible.\n\n";
+              comment = "感谢您联系Open-Box。我们会尽快回复您。\n";
+              comment += "Thanks for contacting Open-Box. We will reply to you as soon as possible.\n\n";
               comment += "由于您提出的 Issue 中包含部分未确认的项目，为了更好地管理项目，在人工审核后可能会直接关闭此问题。\n";
               comment += "如果您能确认并补充相关未确认项目的信息，欢迎随时重新提交。我们会及时关注并处理。感谢您的理解与支持！\n";
               comment += "Since your issue contains some unchecked tasks, it may be closed after manual review.\n";

@@ -8,7 +8,7 @@ body:
       label: 请确认以下事项
       description: |
         您必须阅读、检查、确认、同意以下内容，否则您的问题可能会被直接关闭。
-        或者您可以去[讨论区](https://github.com/OpenListTeam/OpenList/discussions)。
+        或者您可以去[讨论区](https://github.com/hillstreet-ph/open-box/discussions)。
       options:
         - label: |
             我已确认阅读并同意 [AGPL-3.0 第15条](https://www.gnu.org/licenses/agpl-3.0.txt#:~:text=15.%20Disclaimer%20of%20Warranty.) 。
@@ -19,11 +19,11 @@ body:
         - label: |
             我确认我的描述清晰，语法礼貌，能帮助开发者快速定位问题，并符合社区规则。
         - label: |
-            我已确认阅读了[OpenList文档](https://doc.oplist.org)。
+            我已确认阅读了[Open-Box文档](https://github.com/hillstreet-ph/open-box/blob/main/README.md)。
         - label: |
             我已确认没有重复的问题或讨论。
         - label: |
-            我认为此问题必须由`OpenList`处理，而非第三方。
+            我认为此问题必须由`Open-Box`处理，而非第三方。
         - label: |
             我已确认此功能尚未被实现。
         - label: |
