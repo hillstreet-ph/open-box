@@ -53,11 +53,12 @@ try:
     )
     port = docker("port", name, "5244/tcp").rsplit(":", 1)[1]
     base = "http://127.0.0.1:" + port
-    for attempt in range(60):
+    for _ in range(60):
         try:
             if request("/ping")[0] == 200:
                 break
         except (urllib.error.URLError, TimeoutError):
+            # Connection failures are expected while the container starts.
             pass
         time.sleep(1)
     else:
