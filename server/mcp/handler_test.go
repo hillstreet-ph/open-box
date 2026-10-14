@@ -61,6 +61,14 @@ func TestInitializeCreatesSession(t *testing.T) {
 	if result["protocolVersion"] != ProtocolVersion {
 		t.Fatalf("unexpected protocol version: %v", result["protocolVersion"])
 	}
+	info := result["serverInfo"].(map[string]any)
+	if info["name"] != "Open-Box MCP" {
+		t.Fatalf("unexpected server identity: %v", info)
+	}
+	instructions, _ := result["instructions"].(string)
+	if strings.Contains(instructions, "openlist.fs.") || !strings.Contains(instructions, "openbox.fs.list") {
+		t.Fatalf("unexpected tool instructions: %s", instructions)
+	}
 }
 
 func TestInitializeNegotiatesSupportedOlderProtocolVersion(t *testing.T) {

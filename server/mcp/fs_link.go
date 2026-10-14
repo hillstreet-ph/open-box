@@ -100,10 +100,10 @@ func (s *Server) callFSLink(c *gin.Context, raw json.RawMessage) (any, *rpcError
 func parseFSLinkArgs(raw json.RawMessage) (*fsLinkArgs, *rpcError) {
 	args := &fsLinkArgs{}
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.link arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.link arguments"}
 	}
 	if err := json.Unmarshal(raw, args); err != nil {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.link arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.link arguments"}
 	}
 	if args.Path == "" {
 		return nil, &rpcError{Code: -32602, Message: "path is required"}

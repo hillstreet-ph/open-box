@@ -2,6 +2,13 @@
 
 Open-Box exposes its existing read-only file tools through the MCP endpoint at `/mcp`. Supabase Auth OAuth 2.1 can authenticate a ChatGPT custom connector, while Open-Box maps the verified Supabase user subject to an existing Open-Box account. No Open-Box account is created automatically.
 
+## Tool names
+
+New clients discover `openbox.fs.list`, `openbox.fs.get`, and `openbox.fs.link`.
+Existing `openlist.fs.*` calls remain supported as compatibility aliases with
+identical authentication and file permissions. Refresh tool discovery after
+upgrading the backend. The endpoint remains `/mcp`.
+
 ## Requirements
 
 - A deployed Open-Box backend and Cloudflare gateway using the same public site URL.

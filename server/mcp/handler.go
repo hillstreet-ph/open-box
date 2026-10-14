@@ -255,7 +255,7 @@ func (s *Server) handleInitialize(c *gin.Context, req request) {
 				"name":    "Open-Box MCP",
 				"version": conf.Version,
 			},
-			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openlist.fs.list, openlist.fs.get, and openlist.fs.link.",
+			"instructions": "Complete initialization with notifications/initialized, then use tools/list and tools/call. Available tools include openbox.fs.list, openbox.fs.get, and openbox.fs.link.",
 		},
 	})
 }

@@ -23,7 +23,7 @@
 - [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
 - [LICENSE](./LICENSE)
 
-## Disclaimer
+## Upstream disclaimer (retained)
 
 OpenList is an open-source project independently maintained by the OpenList Team, following the AGPL-3.0 license and committed to maintaining complete code openness and modification transparency.
 
@@ -120,19 +120,29 @@ Thank you for your support and understanding of the OpenList project.
 
 ## Document
 
+- [Open-Box setup and operations](./docs/platform/README.md)
+- [Open-Box API and MCP integration](./docs/platform/CHATGPT_MCP.md)
+- [Open-Box storage integrations](https://open-box.space/settings/integrations)
+
+Upstream engine reference documentation:
+
 - 📘 [Docs](https://doc.oplist.org)
 - 🌏 [CN Mirror](https://doc.oplist.org.cn)
 - ⚖️ [Terms of Use](https://doc.oplist.org/terms)
 - 🔒 [Privacy Policy](https://doc.oplist.org/privacy)
 
-## Demo
+## Open-Box application
+
+- [Open-Box](https://open-box.space)
+
+Upstream engine demos:
 
 - 🌎 [Global Demo](https://demo.oplist.org)
 - 🇨🇳 [CN Demo](https://demo.oplist.org.cn)
 
 ## Discussion
 
-Please refer to [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
+Please refer to [*Discussions*](https://github.com/hillstreet-ph/open-box/discussions) for raising general questions, ***Issues* is for bug reports and feature requests only.**
 
 ## Sponsor
 
@@ -148,9 +158,9 @@ Thanks to the following donors for their generous support:
 
 ## License
 
-The `OpenList` is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
+The `Open-Box` distribution is open-source software licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) license.
 
-## Disclaimer
+## Upstream disclaimer (retained)
 
 - This project is a free and open-source software designed to facilitate file sharing via net disks, primarily intended to support the downloading and learning of the Go programming language.
 - Please comply with all applicable laws and regulations when using this software. Any form of misuse is strictly prohibited.
@@ -162,7 +172,12 @@ The `OpenList` is open-source software licensed under the [AGPL-3.0](https://www
 - You are solely responsible for any risks associated with using this software, including but not limited to account bans or download speed limitations.
 - This project is licensed under the [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.txt) License. Please see the [LICENSE](./LICENSE) file for details.
 
-## Contact Us
+## Open-Box support
+
+- [Issues](https://github.com/hillstreet-ph/open-box/issues)
+- [Discussions](https://github.com/hillstreet-ph/open-box/discussions)
+
+## Upstream community
 
 - [@GitHub](https://github.com/OpenListTeam)
 - [Telegram Group](https://t.me/OpenListTeam)

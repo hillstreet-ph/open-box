@@ -86,11 +86,11 @@ func parseFSListArgs(raw json.RawMessage) (*fsListArgs, *rpcError) {
 		PerPage: model.MaxInt,
 	}
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.list arguments"}
 	}
 
 	if err := json.Unmarshal(raw, args); err != nil {
-		return nil, &rpcError{Code: -32602, Message: "invalid openlist.fs.list arguments"}
+		return nil, &rpcError{Code: -32602, Message: "invalid openbox.fs.list arguments"}
 	}
 	if args.Path == "" {
 		return nil, &rpcError{Code: -32602, Message: "path is required"}

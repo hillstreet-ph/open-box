@@ -88,7 +88,7 @@ func WebDAVAuth(c *gin.Context) {
 			c.Next()
 			return
 		}
-		c.Writer.Header()["WWW-Authenticate"] = []string{`Basic realm="openlist"`}
+		c.Writer.Header()["WWW-Authenticate"] = []string{`Basic realm="Open-Box"`}
 		c.Status(http.StatusUnauthorized)
 		c.Abort()
 		return

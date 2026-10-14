@@ -1,16 +1,19 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
+  <h1>Open-Box</h1>
+  <img src="https://open-box.space/open-box-brand.svg" width="128" height="128" alt="Open-Box logo" />
 
-  <p><em>OpenList is een veerkrachtige, langetermijn, door de gemeenschap geleide fork van AList — gebouwd om open source te beschermen tegen op vertrouwen gebaseerde aanvallen.</em></p>
+  <p><em>HillStreet's managed storage gateway, powered by the OpenList engine.</em></p>
 
-  <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
-  <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/actions?query=workflow%3ABuild"><img src="https://img.shields.io/github/actions/workflow/status/OpenListTeam/OpenList/build.yml?branch=main" alt="Build status" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/release/OpenListTeam/OpenList" alt="latest version" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/blob/main/LICENSE"><img src="https://img.shields.io/github/license/hillstreet-ph/open-box" alt="License" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/actions"><img src="https://img.shields.io/github/actions/workflow/status/hillstreet-ph/open-box/build.yml?branch=main" alt="Build status" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/releases"><img src="https://img.shields.io/github/v/release/hillstreet-ph/open-box" alt="latest version" /></a>
 
-  <a href="https://github.com/OpenListTeam/OpenList/discussions"><img src="https://img.shields.io/github/discussions/OpenListTeam/OpenList?color=%23ED8936" alt="discussions" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/downloads/OpenListTeam/OpenList/total?color=%239F7AEA&logo=github" alt="Downloads" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/discussions"><img src="https://img.shields.io/github/discussions/hillstreet-ph/open-box?color=%237C3AED" alt="discussions" /></a>
+  <a href="https://github.com/hillstreet-ph/open-box/releases"><img src="https://img.shields.io/github/downloads/hillstreet-ph/open-box/total?color=%237C3AED&logo=github" alt="Downloads" /></a>
 </div>
+
+> Open-Box is maintained by HillStreet. The upstream OpenList notices below are retained for attribution and AGPL-3.0 compliance.
+
 
 ---
 
@@ -129,7 +132,7 @@ Dank u voor uw ondersteuning en begrip
 
 ## Discussie
 
-Stel algemene vragen in [*Discussions*](https://github.com/OpenListTeam/OpenList/discussions), ***Issues* zijn alleen voor bugmeldingen en feature requests.**
+Stel algemene vragen in [*Discussions*](https://github.com/hillstreet-ph/open-box/discussions), ***Issues* zijn alleen voor bugmeldingen en feature requests.**
 
 ## Sponsoren
 
