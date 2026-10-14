@@ -80,7 +80,19 @@ export const ASSISTANT_WIDGET = String.raw`(() => {
   let conversationToken = token();
   function syncSession() {
     if (conversationToken !== token()) {
-      conversationToken = token(); clearPlan(); messages.replaceChildren();
+      conversationToken = token(); clearPlan(); messages.replaceChildren(); prompt.value = '';
+    }
+  }
+  // Native login/logout uses Storage methods in this document, which does not
+  // receive its own storage events. Clear before the caller can render a new user.
+  if (window.Storage) {
+    for (const method of ['setItem', 'removeItem', 'clear']) {
+      const original = window.Storage.prototype[method];
+      window.Storage.prototype[method] = function (...args) {
+        const result = Reflect.apply(original, this, args);
+        if (this === localStorage) syncSession();
+        return result;
+      };
     }
   }
   function add(label, text, user = false) {
@@ -89,7 +101,7 @@ export const ASSISTANT_WIDGET = String.raw`(() => {
     const title = document.createElement('span'); title.className = 'label'; title.textContent = label;
     node.append(title, document.createTextNode(text)); messages.append(node); messages.scrollTop = messages.scrollHeight;
   }
-  function clearPlan() { pending = null; pendingToken = null; review.hidden = true; }
+  function clearPlan() { pending = null; pendingToken = null; review.hidden = true; review.querySelector('pre').textContent = ''; }
   function setBusy(value) { busy = value; send.disabled = value; confirm.disabled = value; }
   async function api(route, body, expectedToken) {
     syncSession();

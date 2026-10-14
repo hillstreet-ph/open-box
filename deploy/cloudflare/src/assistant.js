@@ -17,7 +17,6 @@ export function filePath(value) {
     typeof value !== "string" ||
     value.length > 2048 ||
     !value.startsWith("/") ||
-    value !== value.trim() ||
     /[\\\x00-\x1f\x7f]/.test(value) ||
     value.includes("//")
   )

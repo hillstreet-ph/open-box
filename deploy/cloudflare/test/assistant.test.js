@@ -99,6 +99,7 @@ test("exact path commands preserve the requested target without model inference"
     ['mkdir "/Workspace/100% Complete"', "mkdir", "/Workspace/100% Complete"],
     ["list '/Workspace/100% Complete'", "list", "/Workspace/100% Complete"],
     ["get /Workspace/Report.txt", "get", "/Workspace/Report.txt"],
+    ['get "/Workspace/report "', "get", "/Workspace/report "],
   ]) {
     const response = await handleAssistant(
       request("chat", { prompt, path: "/" }),
@@ -116,7 +117,7 @@ test("exact path commands preserve the requested target without model inference"
     assert.deepEqual(plan.action, { tool, path });
     assert.equal(plan.requires_confirmation, tool === "mkdir");
   }
-  assert.equal(calls, 5); // Identity reads only; no filesystem writes during planning.
+  assert.equal(calls, 6); // Identity reads only; no filesystem writes during planning.
 });
 
 test("exact commands retain path validation and work without an AI binding", async (t) => {
@@ -480,6 +481,40 @@ test("literal percent signs remain raw native filesystem characters", async (t) 
   );
   assert.equal(response.status, 200);
   assert.equal(forwarded.path, "/Workspace/100% Complete");
+});
+
+test("trailing spaces remain addressable after rename and in every file operation", async (t) => {
+  const actions = [
+    { tool: "rename", path: "/Workspace/report", name: "report " },
+    { tool: "list", path: "/Workspace/report " },
+    { tool: "get", path: "/Workspace/report " },
+    { tool: "mkdir", path: "/Workspace/new " },
+    { tool: "rename", path: "/Workspace/report ", name: "report" },
+    {
+      tool: "copy",
+      src_dir: "/Workspace/source ",
+      dst_dir: "/Workspace/destination ",
+      names: ["report "],
+    },
+  ];
+  const forwarded = [];
+  stub(t, async (url, init) => {
+    if (new URL(url).pathname === "/api/me") return me();
+    forwarded.push(JSON.parse(init.body));
+    return Response.json({ code: 200, data: { content: [], total: 0 } });
+  });
+  for (const action of actions) {
+    const response = await handleAssistant(
+      request("execute", { action, confirmed: true }),
+      env,
+    );
+    assert.equal(response.status, 200);
+    const sent = forwarded.at(-1);
+    for (const key of ["path", "name", "src_dir", "dst_dir", "names"]) {
+      if (key in action) assert.deepEqual(sent[key], action[key]);
+    }
+  }
+  assert.equal(forwarded.length, actions.length);
 });
 
 test("native error envelopes and HTTP failures preserve error classes", async (t) => {

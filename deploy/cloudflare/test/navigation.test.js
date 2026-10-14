@@ -114,3 +114,92 @@ test("the shipped widget keeps Assistant available without a duplicate floating 
   );
   assert.equal(root.querySelector(".panel").hidden, true);
 });
+
+test("same-tab account changes immediately erase conversations, drafts and pending writes", async (t) => {
+  for (const method of ["setItem", "removeItem", "clear"]) {
+    await t.test(method, async () => {
+      const { document, window } = parseHTML("<html><body></body></html>");
+      class Storage {
+        values = new Map();
+        getItem(key) {
+          return this.values.get(String(key)) ?? null;
+        }
+        setItem(key, value) {
+          this.values.set(String(key), String(value));
+        }
+        removeItem(key) {
+          this.values.delete(String(key));
+        }
+        clear() {
+          this.values.clear();
+        }
+      }
+      const localStorage = new Storage();
+      const sessionStorage = new Storage();
+      const browserWindow = {
+        Storage,
+        addEventListener: window.addEventListener.bind(window),
+      };
+      localStorage.setItem("token", "account-a");
+      const calls = [];
+      const fetch = async (url) => {
+        calls.push(url);
+        return Response.json(
+          url.endsWith("session")
+            ? { user: { username: "account-a" }, ai_available: true }
+            : {
+                message: "Private folder proposal",
+                action: { tool: "mkdir", path: "/Private" },
+                requires_confirmation: true,
+              },
+        );
+      };
+      new Function(
+        "document",
+        "window",
+        "location",
+        "MutationObserver",
+        "localStorage",
+        "fetch",
+        ASSISTANT_WIDGET,
+      )(
+        document,
+        browserWindow,
+        { pathname: "/Workspace" },
+        window.MutationObserver,
+        localStorage,
+        fetch,
+      );
+      const root = document.getElementById(
+        "open-box-agent-assistant",
+      ).shadowRoot;
+      root.querySelector(".launcher").click();
+      await settle();
+      root.querySelector("textarea").value = "mkdir /Private";
+      root
+        .querySelector("form")
+        .dispatchEvent(new window.Event("submit", { cancelable: true }));
+      await settle();
+      assert.equal(root.querySelector(".review").hidden, false);
+      assert.match(root.querySelector(".messages").textContent, /Private/);
+      root.querySelector("textarea").value = "Private draft";
+      sessionStorage.setItem("token", "unrelated");
+      localStorage.setItem("theme", "dark");
+      assert.match(root.querySelector(".messages").textContent, /Private/);
+      localStorage[method]("token", "account-b");
+      // No focus, storage event, new request, or asynchronous tick is required.
+      assert.equal(root.querySelector(".messages").textContent, "");
+      assert.equal(root.querySelector("textarea").value, "");
+      assert.equal(root.querySelector(".review").hidden, true);
+      assert.equal(root.querySelector(".review pre").textContent, "");
+      root.querySelector(".confirm").click();
+      await settle();
+      assert.equal(calls.length, 2);
+      assert.equal(
+        localStorage.getItem("token"),
+        method === "setItem" ? "account-b" : null,
+      );
+      assert.equal(sessionStorage.getItem("token"), "unrelated");
+    });
+  }
+});
