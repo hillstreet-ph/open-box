@@ -105,6 +105,17 @@ const FRONTEND_BRAND_LABELS = {
   "Allow uploading directly to OneDrive without going through OpenList":
     "Allow uploading directly to OneDrive without going through Open-Box",
   "Powered by OpenList": "Powered by Open-Box",
+  "OpenList 管理": "Open-Box 管理",
+  "由 OpenList 驱动": "由 Open-Box 驱动",
+  "由 OpenList 驅動": "由 Open-Box 驅動",
+  允许不经OpenList直接上传到OneDrive: "允许不经Open-Box直接上传到OneDrive",
+  允許不經OpenList直接上傳到OneDrive: "允許不經Open-Box直接上傳到OneDrive",
+  "允许直接上传到 OneDrive 而不通过 OpenList":
+    "允许直接上传到 OneDrive 而不通过 Open-Box",
+  "允許直接上傳到 OneDrive 而不通過 OpenList":
+    "允許直接上傳到 OneDrive 而不通過 Open-Box",
+  "待 OpenList 提示 139 邮箱验证码已发送后，再填写此项，并重新保存配置。":
+    "待 Open-Box 提示 139 邮箱验证码已发送后，再填写此项，并重新保存配置。",
 };
 const OPEN_BOX_ABOUT = `# Open-Box
 
@@ -129,8 +140,17 @@ Open-Box is derived from OpenList and AList under AGPL-3.0. Upstream contributor
 
 function versionFrontendImports(source) {
   return source.replace(
-    /(["'`])((?:\/?assets\/|\.\.?\/)[^"'`\s?]+\.js)\1/g,
-    "$1$2?open-box-brand=20261010$1",
+    /(["'`])((?:\/?assets\/|\.\.?\/)[^"'`\s?#]+\.js)(\?[^"'`\s#]*)?(#[^"'`\s]*)?\1/g,
+    (_, quote, path, query = "", hash = "") => {
+      // Preserve raw JS literal escapes/interpolations and unrelated query bytes.
+      const separator = query.includes("&amp;") ? "&amp;" : "&";
+      const params = query ? query.slice(1).split(separator) : [];
+      const retained = params.filter(
+        (part) => !part.startsWith("open-box-brand="),
+      );
+      retained.push("open-box-brand=20261014");
+      return `${quote}${path}?${retained.join(separator)}${hash}${quote}`;
+    },
   );
 }
 
@@ -148,10 +168,15 @@ function applicationDocumentPath(pathname) {
 
 export function brandFrontendAsset(source, kind) {
   if (kind === "html") {
-    const branded = versionFrontendImports(source).replace(
-      /(<meta[^>]+(?:name="generator"|name="apple-mobile-web-app-title")[^>]+content=")OpenList("[^>]*>)/g,
-      "$1Open-Box$2",
-    );
+    const branded = versionFrontendImports(source)
+      .replace(/<meta\b[^>]*>/gi, (tag) =>
+        /\bname\s*=\s*(["'])(?:generator|apple-mobile-web-app-title)\1/i.test(
+          tag,
+        )
+          ? tag.replace(/(\bcontent\s*=\s*["'])OpenList(["'])/i, "$1Open-Box$2")
+          : tag,
+      )
+      .replace(/(<title\b[^>]*>)\s*OpenList\s*(<\/title>)/gi, "$1Open-Box$2");
     return branded.includes("/open-box-assistant.js")
       ? branded
       : branded.replace(
@@ -166,6 +191,8 @@ export function brandFrontendAsset(source, kind) {
     } catch {
       return source;
     }
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest))
+      return source;
     manifest.name = "Open-Box";
     manifest.short_name = "Open-Box";
     manifest.icons = [
@@ -198,6 +225,11 @@ export function brandFrontendAsset(source, kind) {
     }
   }
   return result
+    .replaceAll("%c OpenList %c ", "%c Open-Box %c ")
+    .replaceAll(
+      " %c https://github.com/OpenListTeam/OpenList",
+      " %c https://github.com/hillstreet-ph/open-box",
+    )
     .replaceAll(
       "https://raw.githubusercontent.com/OpenListTeam/OpenList/main/README.md",
       "/open-box-about.md",
@@ -725,8 +757,8 @@ async function proxy(request, env, url) {
     request.method === "GET" &&
     (url.pathname.startsWith("/assets/") ||
       url.pathname === "/manifest.json" ||
-      url.pathname.startsWith("/@manage") ||
-      url.pathname === "/")
+      url.pathname === "/api/public/settings" ||
+      applicationDocumentPath(url.pathname))
   ) {
     headers.delete("If-None-Match");
     headers.delete("If-Modified-Since");
@@ -747,8 +779,15 @@ async function proxy(request, env, url) {
     url.pathname === "/api/public/settings" &&
     response.ok
   ) {
-    const payload = await response.json().catch(() => null);
-    if (payload?.data) {
+    const payload = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (
+      payload?.data &&
+      typeof payload.data === "object" &&
+      !Array.isArray(payload.data)
+    ) {
       payload.data.site_title = "Open-Box";
       payload.data.logo = `${url.origin}/open-box-brand.svg`;
       payload.data.favicon = `${url.origin}/open-box-brand.svg`;

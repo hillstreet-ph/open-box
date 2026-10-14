@@ -270,18 +270,168 @@ test("branding handles compiled template literals", () => {
   );
 });
 
+test("branding covers deployed Chinese locales without renaming storage drivers", () => {
+  const labels = [
+    "OpenList 管理",
+    "由 OpenList 驱动",
+    "由 OpenList 驅動",
+    "允许不经OpenList直接上传到OneDrive",
+    "允許不經OpenList直接上傳到OneDrive",
+    "允许直接上传到 OneDrive 而不通过 OpenList",
+    "允許直接上傳到 OneDrive 而不通過 OpenList",
+    "待 OpenList 提示 139 邮箱验证码已发送后，再填写此项，并重新保存配置。",
+  ];
+  for (const quote of ['"', "'", "`"])
+    for (const label of labels) {
+      const source = `const label=${quote}${label}${quote};const driver="OpenList";const share="OpenListShare";`;
+      const output = brandFrontendAsset(source, "javascript");
+      assert.ok(
+        output.includes(
+          `${quote}${label.replaceAll("OpenList", "Open-Box")}${quote}`,
+        ),
+      );
+      assert.ok(output.includes('driver="OpenList"'));
+      assert.ok(output.includes('share="OpenListShare"'));
+    }
+  const banner =
+    "console.log(`%c OpenList %c ${version} %c https://github.com/OpenListTeam/OpenList`);window.OpenListPlugin={};";
+  assert.equal(
+    brandFrontendAsset(banner, "javascript"),
+    "console.log(`%c Open-Box %c ${version} %c https://github.com/hillstreet-ph/open-box`);window.OpenListPlugin={};",
+  );
+});
+
+test("HTML branding handles alternate metadata order and preserves attribution", () => {
+  const source =
+    "<title>OpenList</title><meta content='OpenList' name='generator'><meta name='apple-mobile-web-app-title' content='OpenList'><meta name='author' content='OpenList'><p>Derived from OpenList</p>";
+  const output = brandFrontendAsset(source, "html");
+  assert.ok(output.includes("<title>Open-Box</title>"));
+  assert.ok(output.includes("content='Open-Box' name='generator'"));
+  assert.ok(
+    output.includes("name='apple-mobile-web-app-title' content='Open-Box'"),
+  );
+  assert.ok(output.includes("name='author' content='OpenList'"));
+  assert.ok(output.includes("Derived from OpenList"));
+  for (const source of ["null", "[]", '"OpenList"', "false"])
+    assert.equal(brandFrontendAsset(source, "manifest"), source);
+});
+
+test("branding refreshes old chunk versions and retains query parameters and fragments", () => {
+  const source =
+    'import "./chunk.js?mode=legacy&open-box-brand=20261010#module";import "https://cdn.example/app.js";';
+  const output = brandFrontendAsset(source, "javascript");
+  assert.ok(
+    output.includes("./chunk.js?mode=legacy&open-box-brand=20261014#module"),
+  );
+  assert.ok(output.includes('"https://cdn.example/app.js"'));
+  assert.equal(brandFrontendAsset(output, "javascript"), output);
+  const dynamic = "const url=`./chunk.js?mode=${mode}&value=a%20b`;";
+  assert.equal(
+    brandFrontendAsset(dynamic, "javascript"),
+    "const url=`./chunk.js?mode=${mode}&value=a%20b&open-box-brand=20261014`;",
+  );
+  const escaped = String.raw`import "./chunk.js?x=1\u0026theme=dark";`;
+  assert.equal(
+    brandFrontendAsset(escaped, "javascript"),
+    String.raw`import "./chunk.js?x=1\u0026theme=dark&open-box-brand=20261014";`,
+  );
+  const html =
+    '<script src="/assets/chunk.js?x=1&amp;theme=dark&amp;open-box-brand=20261010"></script>';
+  assert.equal(
+    brandFrontendAsset(html, "html"),
+    '<script src="/assets/chunk.js?x=1&amp;theme=dark&amp;open-box-brand=20261014"></script>',
+  );
+});
+
+test("nested pages and public settings cannot reuse unbranded origin validators", async () => {
+  const original = globalThis.fetch;
+  const env = {
+    ORIGIN_URL: "https://origin.example",
+    SUPABASE_URL: "https://project.example",
+    SUPABASE_PUBLISHABLE_KEY: "public",
+  };
+  try {
+    globalThis.fetch = async (request) => {
+      assert.equal(request.headers.has("If-None-Match"), false);
+      assert.equal(request.headers.has("If-Modified-Since"), false);
+      return request.url.endsWith("/api/public/settings")
+        ? Response.json({ data: { site_title: "OpenList" } })
+        : new Response(
+            '<title>OpenList</title><script>window.OPENLIST_CONFIG={}</script><div id="root"></div>',
+            { headers: { "content-type": "text/html" } },
+          );
+    };
+    for (const path of ["/GoogleDrive/Documents", "/api/public/settings"]) {
+      const response = await worker.fetch(
+        new Request("https://open-box.space" + path, {
+          headers: {
+            "If-None-Match": "old",
+            "If-Modified-Since": "Wed, 01 Oct 2025 00:00:00 GMT",
+          },
+        }),
+        env,
+      );
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /Open-Box/);
+    }
+    globalThis.fetch = async (request) => {
+      assert.equal(request.headers.get("If-None-Match"), "file-etag");
+      return new Response(null, {
+        status: 304,
+        headers: { etag: "file-etag" },
+      });
+    };
+    const file = await worker.fetch(
+      new Request("https://open-box.space/d/file.txt", {
+        headers: { "If-None-Match": "file-etag" },
+      }),
+      env,
+    );
+    assert.equal(file.status, 304);
+    assert.equal(file.headers.get("etag"), "file-etag");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("unrecognized public settings responses remain readable without invented branding", async () => {
+  const original = globalThis.fetch;
+  const env = {
+    ORIGIN_URL: "https://origin.example",
+    SUPABASE_URL: "https://project.example",
+    SUPABASE_PUBLISHABLE_KEY: "public",
+  };
+  try {
+    for (const body of [
+      "upstream unavailable",
+      '{"code":500,"message":"settings unavailable"}',
+      '{"data":"unexpected upstream response"}',
+    ]) {
+      globalThis.fetch = async () =>
+        new Response(body, { headers: { "content-type": "application/json" } });
+      const response = await worker.fetch(
+        new Request("https://open-box.space/api/public/settings"),
+        env,
+      );
+      assert.equal(await response.text(), body);
+    }
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("branding versions entry and transitive chunk URLs for existing browser caches", () => {
   const html = brandFrontendAsset(
     '<script src="/assets/index-abc.js"></script>',
     "html",
   );
-  assert.match(html, /index-abc.js\?open-box-brand=20261010/);
+  assert.match(html, /index-abc.js\?open-box-brand=20261014/);
   const js = brandFrontendAsset(
     'import "./About-abc.js";const deps=["/assets/home-abc.js"];',
     "javascript",
   );
-  assert.match(js, /About-abc.js\?open-box-brand=20261010/);
-  assert.match(js, /home-abc.js\?open-box-brand=20261010/);
+  assert.match(js, /About-abc.js\?open-box-brand=20261014/);
+  assert.match(js, /home-abc.js\?open-box-brand=20261014/);
   assert.equal(brandFrontendAsset(js, "javascript"), js);
 });
 
@@ -303,7 +453,7 @@ test("nested storage pages receive branded SPA metadata and versioned chunks", a
     );
     const html = await response.text();
     assert.match(html, /content="Open-Box"/);
-    assert.match(html, /index-a.js\?open-box-brand=20261010/);
+    assert.match(html, /index-a.js\?open-box-brand=20261014/);
     assert.equal(response.headers.get("cache-control"), "no-store");
   } finally {
     globalThis.fetch = original;

@@ -75,3 +75,13 @@ Run `npm test` in `deploy/cloudflare`. Tests cover unauthenticated and disabled/
 Review the issue-scoped PR and required checks before merge. Verify an immutable gateway version in staging before promotion. Retain the current production version for rollback. The existing backend Docker delivery is independently blocked by GitHub Actions account/organization availability and is not repaired by a gateway-only change. Do not deploy a mutable image tag to bypass it.
 
 For production smoke checks, verify the dock on a phone-sized viewport, sign-in denial, a permitted folder listing, a proposed folder creation cancelled without a write, and one confirmed operation on a temporary authorized path. Check native Tasks for asynchronous copies. Preserve legal upstream notices while using Open-Box in user-facing branding.
+
+## Open-Box presentation repair (2026-10-14)
+
+The existing gateway rebrands the shipped English, Simplified Chinese and Traditional Chinese presentation labels, metadata, manifest and console banner. Driver identifiers (`OpenList`, `OpenListShare`), `window.OPENLIST_CONFIG`, the plugin SDK and upstream attribution remain compatible. Source documents and downloads are not subject to branding replacement.
+
+Asset references now use `open-box-brand=20261014`, including previously versioned references. Other query bytes, JavaScript interpolation/escapes and URL fragments are preserved. Nested SPA routes and public settings discard stale origin validators so they cannot reuse an unbranded 304 response. Non-JSON or unrecognized settings responses are forwarded without consuming their response body. Unexpected manifest shapes are preserved rather than throwing.
+
+Validation: 48 gateway tests pass; the five downloaded English/Chinese/Traditional Chinese and modern/legacy store bundles pass JavaScript syntax checks after transformation. Origin and edge `/ping` both return `pong`. These are public endpoint/source checks, not authenticated storage or login verification.
+
+Release remains blocked: GitHub Test Build dispatch returned HTTP 422 (Actions disabled for user/organization) on 2026-10-14. Cloudflare control requires reauthentication. No approving write-access maintainer review is recorded on PR44. The prior candidate does not include this repair; stage and verify a new candidate after review and checks, then promote with the prior version retained for rollback.
