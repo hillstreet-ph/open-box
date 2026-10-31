@@ -133,6 +133,7 @@ jobs:
           push: ${{ env.IMAGE_PUSH == 'true' }}
           build-args: |
             BASE_IMAGE_TAG=${{ matrix.base_image_tag }}
+            FRONTEND_REPO=${{ vars.FRONTEND_REPO || 'OpenListTeam/OpenList-Frontend' }}
             ${{ matrix.build_arg }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ""
+      expected_frontend_asset:
+        description: "Asset name the served index.html must reference (e.g. index-D-qN4CSQ.js); blank skips the frontend identity check"
+        required: false
+        type: string
+        default: ""
       rotate_confirmed:
         description: "Provider management tokens were rotated (docs/PLATFORM_BACKEND.md)"
         required: true
@@ -167,6 +172,7 @@ jobs:
         env:
           EXPECTED_TAG: ${{ steps.image.outputs.tag }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
         run: |
           set -euo pipefail
           fail() { echo "::error::production gate failed: $1"; exit 1; }
@@ -215,6 +221,15 @@ jobs:
           tls=$(curl -sS -o /dev/null -w "%{ssl_verify_result}" --max-time 20 "$SITE_URL/ping")
           [ "$tls" = "0" ] || fail "TLS verification returned $tls"
           curl -sSI --max-time 20 "$SITE_URL/ping" | grep -qi "x-zeabur" || echo "::warning::no x-zeabur header observed at the edge; confirm the Worker still fronts the origin"
+
+          if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+            served=$(curl -sS --max-time 20 "$SITE_URL/" | grep -oE "/assets/index-[A-Za-z0-9_-]+\\.js" | head -n 1 || true)
+            echo "served entry asset: ${served:-none}"
+            case "$served" in
+              *"$EXPECTED_FRONTEND_ASSET"*) echo "frontend identity matches the expected build" ;;
+              *) fail "served frontend asset is not $EXPECTED_FRONTEND_ASSET" ;;
+            esac
+          fi
 
           echo "Production gate passed for $EXPECTED_TAG."
 
