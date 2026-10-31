@@ -206,11 +206,16 @@ func GenerateToken(user *model.User) (tokenString string, err error) {
 }
 
 func ParseToken(tokenString string) (*UserClaims, error) {
-	claims, err := verifySessionToken(tokenString)
+	// Normalized so a caller that was handed the Authorization header verbatim
+	// resolves the same session as one that was handed the bare token.
+	// Credential is idempotent, so passing an already-normalized token is a
+	// no-op.
+	credential := Credential(tokenString)
+	claims, err := verifySessionToken(credential)
 	if err != nil {
 		return nil, err
 	}
-	if IsTokenInvalidated(tokenString) {
+	if IsTokenInvalidated(credential) {
 		return nil, errors.New("token is invalidated")
 	}
 	return claims, nil
@@ -264,12 +269,43 @@ func IsTokenInvalidated(tokenString string) bool {
 	return revokedSessions.contains(hashSessionToken(tokenString))
 }
 
+// Credential returns the credential a request carries, in the one form every
+// authentication path expects.
+//
+// Clients split into two camps. Browsers and the OpenList SDK put the token in
+// the Authorization header by itself; OAuth-style clients — MCP servers,
+// ChatGPT plugins, most HTTP libraries — put the "Bearer " scheme in front.
+// Both mean the same credential, and a deployment that accepts only one of them
+// reads as broken to the other half of its users: a "Bearer obk_…" access token
+// used to fall through session parsing and answer "that's not even a token".
+// So the scheme is removed once, here, instead of in each resolver.
+//
+// RFC 7235 makes the scheme case-insensitive and allows optional whitespace
+// after it, and no session JWT, access token or site token can begin with the
+// letters "bearer" followed by a space, so matching loosely costs nothing. A
+// header without the scheme is returned trimmed but otherwise untouched, which
+// keeps the empty header the guest signal it already is.
+//
+// Everything that reads a credential must go through this function — the site
+// token comparison, the access-token prefix test, session parsing and the
+// revocation hash alike. A path that instead compares or hashes exactly what
+// arrived stores a revocation, or accepts a token, under a value no other path
+// looks up.
+func Credential(header string) string {
+	trimmed := strings.TrimSpace(header)
+	scheme, rest, hasScheme := strings.Cut(trimmed, " ")
+	if hasScheme && strings.EqualFold(scheme, "Bearer") {
+		return strings.TrimSpace(rest)
+	}
+	return trimmed
+}
+
 // sessionCredential is the canonical form of a session credential. Handlers
 // hand over the raw Authorization header, and a client may send the bare token
 // on one request and the "Bearer " form on the logout request, so both the
 // revocation and the check normalize before hashing.
 func sessionCredential(tokenString string) string {
-	return strings.TrimPrefix(tokenString, "Bearer ")
+	return Credential(tokenString)
 }
 
 // hashSessionToken identifies a session without storing the token itself.

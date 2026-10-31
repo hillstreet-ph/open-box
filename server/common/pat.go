@@ -42,9 +42,11 @@ func HashPAT(raw string) string {
 }
 
 // IsPAT reports whether an Authorization header value is a personal
-// access token (as opposed to a login JWT or the admin site token).
+// access token (as opposed to a login JWT or the admin site token). The
+// "Bearer " scheme is accepted because that is how OAuth-style clients —
+// MCP servers, ChatGPT plugins, most HTTP libraries — send any credential.
 func IsPAT(token string) bool {
-	return strings.HasPrefix(token, PATPrefix)
+	return strings.HasPrefix(Credential(token), PATPrefix)
 }
 
 // patLastUsedThrottle controls how often a token's last-used time is
@@ -52,9 +54,12 @@ func IsPAT(token string) bool {
 const patLastUsedThrottle = 5 * time.Minute
 
 // ResolvePAT authenticates a personal access token and returns its owner
-// and the token record (with granted scopes).
+// and the token record (with granted scopes). The credential is normalized
+// before hashing, so a client that sends the "Bearer " scheme resolves to the
+// same row as one that sends the bare token — the digest stored at creation is
+// of the bare secret.
 func ResolvePAT(raw string) (*model.User, *model.AccessToken, error) {
-	t, err := op.GetAccessTokenByHash(HashPAT(raw))
+	t, err := op.GetAccessTokenByHash(HashPAT(Credential(raw)))
 	if err != nil {
 		return nil, nil, err
 	}

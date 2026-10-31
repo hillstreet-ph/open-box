@@ -67,8 +67,8 @@ func WebDAVAuth(c *gin.Context) {
 	if !ok {
 		bt := c.GetHeader("Authorization")
 		log.Debugf("[webdav auth] token: %s", bt)
-		if strings.HasPrefix(bt, "Bearer") {
-			bt = strings.TrimPrefix(bt, "Bearer ")
+		if strings.HasPrefix(strings.ToLower(bt), "bearer") {
+			bt = common.Credential(bt)
 			token := setting.GetStr(conf.Token)
 			if token != "" && subtle.ConstantTimeCompare([]byte(bt), []byte(token)) == 1 {
 				admin, err := op.GetAdmin()

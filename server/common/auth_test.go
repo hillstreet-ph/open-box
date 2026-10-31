@@ -351,3 +351,68 @@ func TestJwtSecretPrefersTheDurableSetting(t *testing.T) {
 		t.Fatalf("failed to clean up the jwt secret setting: %+v", err)
 	}
 }
+
+// One credential, two spellings. Browsers and the SDK send the token as the
+// whole Authorization value; OAuth-style clients (MCP servers, ChatGPT plugins,
+// most HTTP libraries) prefix it with the "Bearer " scheme. Before
+// Credential() the scheme form was resolved nowhere except at logout, so a
+// `Bearer obk_…` access token fell through to session parsing and answered
+// "that's not even a token" — the integration clients the token feature exists
+// for could not use it.
+func TestCredentialNormalizesEveryHeaderForm(t *testing.T) {
+	cases := []struct {
+		name, header, want string
+	}{
+		{"bare token", "obk_abc123", "obk_abc123"},
+		{"bearer scheme", "Bearer obk_abc123", "obk_abc123"},
+		{"lowercase scheme", "bearer obk_abc123", "obk_abc123"},
+		{"uppercase scheme", "BEARER obk_abc123", "obk_abc123"},
+		{"extra spaces after the scheme", "Bearer    obk_abc123", "obk_abc123"},
+		{"surrounding whitespace", "  Bearer obk_abc123  ", "obk_abc123"},
+		{"a token that merely starts with the letters", "Bearerish-token", "Bearerish-token"},
+		{"the scheme word alone is not a scheme", "Bearer", "Bearer"},
+		{"an empty header stays empty", "", ""},
+		{"whitespace only stays empty", "   ", ""},
+		{"a scheme with nothing after it", "Bearer ", "Bearer"},
+	}
+	for _, c := range cases {
+		if got := Credential(c.header); got != c.want {
+			t.Errorf("%s: Credential(%q) = %q, want %q", c.name, c.header, got, c.want)
+		}
+	}
+
+	// Normalizing an already-normalized credential must change nothing, so
+	// callers may apply it without knowing which form they were handed.
+	for _, c := range cases {
+		once := Credential(c.header)
+		if twice := Credential(once); twice != once {
+			t.Errorf("Credential is not idempotent for %q: %q != %q", c.header, twice, once)
+		}
+	}
+}
+
+// A session presented with the scheme must authenticate exactly as the bare
+// token does — and must stay rejected once revoked, whichever form is used to
+// check it.
+func TestParseTokenAcceptsTheBearerScheme(t *testing.T) {
+	revokedSessions = newRevocationStore()
+	raw := mustToken(t, "bearer-session")
+
+	claims, err := ParseToken("Bearer " + raw)
+	if err != nil {
+		t.Fatalf("session sent with the scheme was rejected: %+v", err)
+	}
+	if claims.Username != "bearer-session" {
+		t.Fatalf("unexpected claims username %q", claims.Username)
+	}
+
+	if err := InvalidateToken(raw); err != nil {
+		t.Fatalf("revoking the bare form failed: %+v", err)
+	}
+	// The hash is taken from the normalized credential, so revoking one form
+	// revokes the other; a scheme-dependent hash would leave the second form
+	// live after a sign-out.
+	if _, err := ParseToken("Bearer " + raw); err == nil {
+		t.Fatal("a session revoked by its bare form still authenticated with the scheme")
+	}
+}

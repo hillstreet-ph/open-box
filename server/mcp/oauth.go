@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
@@ -88,18 +89,17 @@ func authenticationChallenge(c *gin.Context) {
 }
 
 func AuthMCP(c *gin.Context) {
-	raw := strings.TrimSpace(c.GetHeader("Authorization"))
-	token := raw
-	if strings.HasPrefix(strings.ToLower(raw), "bearer ") {
-		token = strings.TrimSpace(raw[len("Bearer "):])
-	}
+	// One normalization point for every credential in the server; see
+	// common.Credential. The space check below still rejects a value that
+	// smuggles anything else after the scheme.
+	token := common.Credential(c.GetHeader("Authorization"))
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
 		authenticationChallenge(c)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	if token == setting.GetStr(conf.Token) {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 		user, err := op.GetAdmin()
 		if err == nil && user != nil && !user.Disabled {
 			common.GinAppendValues(c, conf.UserKey, user)

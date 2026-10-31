@@ -16,7 +16,10 @@ import (
 // if token is empty, set user to guest
 func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 	return func(c *gin.Context) {
-		token := c.GetHeader("Authorization")
+		// Normalized once, so the site token, an access token and a session
+		// JWT all resolve the same way whether or not the client sent the
+		// "Bearer " scheme. See common.Credential.
+		token := common.Credential(c.GetHeader("Authorization"))
 		if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 			admin, err := op.GetAdmin()
 			if err != nil {
@@ -88,7 +91,7 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 }
 
 func Authn(c *gin.Context) {
-	token := c.GetHeader("Authorization")
+	token := common.Credential(c.GetHeader("Authorization"))
 	if subtle.ConstantTimeCompare([]byte(token), []byte(setting.GetStr(conf.Token))) == 1 {
 		admin, err := op.GetAdmin()
 		if err != nil {
