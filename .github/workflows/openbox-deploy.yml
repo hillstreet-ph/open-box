@@ -112,11 +112,28 @@ jobs:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
         run: |
           set -euo pipefail
+          # The Zeabur CLI prefixes some JSON responses with colored INFO lines.
+          zbjson() { sed -e 's/\x1b\[[0-9;]*m//g' | awk '!seen && /^[{[]/ {seen=1} seen'; }
           npx --yes zeabur@latest auth login --token "$ZEABUR_API_TOKEN" >/dev/null
-          npx --yes zeabur@latest service get --id "$ZEABUR_SERVICE_ID" --interactive=false --json > before-service.json
-          jq -r '{uid: .uid, name: .name, projectID: .projectID, updatedAt: .updatedAt}' before-service.json
-          npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --json > before-deployment.json || echo '{}' > before-deployment.json
-          echo "previous deployment state: $(jq -r '.state // .status // "unknown"' before-deployment.json)"
+          # Responses are PascalCase (ID, Name, Project.ID, Template), so the old
+          # lowercase reads produced a row of nulls and looked like a bad binding.
+          npx --yes zeabur@latest service get --id "$ZEABUR_SERVICE_ID" --interactive=false --auto_check_update=false --json 2>/dev/null \
+            | zbjson > before-service.json
+          jq -c '{id: (.ID // .uid), name: (.Name // .name), projectID: (((.Project // {}) | (.ID // .id)) // .projectID), template: .Template}' before-service.json
+          npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --auto_check_update=false --json 2>/dev/null \
+            | zbjson > before-deployment.json || echo '{}' > before-deployment.json
+          echo "previous deployment state: $(jq -r '(.State // .state // .Status // .status // "unknown")' before-deployment.json)"
+          # Refuse to pin a service that does not own the origin hostname: this
+          # project also contains a second prebuilt service, open-box-next.
+          origin_host=$(printf '%s' "$ORIGIN_URL" | sed -e 's#^https\?://##' -e 's#/.*$##')
+          npx --yes zeabur@latest domain list --id "$ZEABUR_SERVICE_ID" --interactive=false --auto_check_update=false --json 2>/dev/null \
+            | zbjson > before-domains.json || echo '[]' > before-domains.json
+          if ! grep -q "$origin_host" before-domains.json; then
+            echo "::error::service $ZEABUR_SERVICE_ID does not list the origin host $origin_host; promotion stopped before any write."
+            echo "domains on this service: $(head -c 400 before-domains.json)"
+            exit 1
+          fi
+          echo "origin host $origin_host is bound to this service"
           echo "$ORIGIN_URL" >/dev/null
           before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" | jq -r '.data.version // empty')
           echo "before_version=$before_version" >> "$GITHUB_OUTPUT"
@@ -144,10 +161,12 @@ jobs:
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
         run: |
           set -euo pipefail
+          zbstate() { sed -e 's/\x1b\[[0-9;]*m//g' | awk '!seen && /^[{[]/ {seen=1} seen' \
+                       | jq -r '(.State // .state // .Status // .status // "unknown")' 2>/dev/null; }
           deadline=$(( $(date +%s) + 900 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --json 2>/dev/null \
-              | jq -r '.state // .status // "unknown"' 2>/dev/null || echo unknown)
+            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --auto_check_update=false --json 2>/dev/null \
+              | zbstate) || state=unknown
             serving=$(curl -fsS --max-time 15 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
             echo "$(date -u +%H:%M:%S) deployment state: $state | serving: ${serving:-unreachable}"
             case "$state" in
