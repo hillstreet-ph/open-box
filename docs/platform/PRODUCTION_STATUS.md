@@ -57,11 +57,30 @@ gh workflow run openbox-deploy.yml --repo hillstreet-ph/open-box \
 
 `rotate_confirmed` asserts that the historically exposed Supabase, Docker Hub and Zeabur management tokens were rotated ([PLATFORM_BACKEND.md](../PLATFORM_BACKEND.md)); only the account owner can make that statement truthfully.
 
+## Promotion executed: 2026-10-31 (third pass) — production now runs the scoped-token build
+
+The operator authorized merge and deployment and answered the rotation attestation. Run `41217330696` (`workflow_dispatch`, 15:57:46Z) pinned the service and rolled it; every write step succeeded.
+
+| Fact | Evidence |
+| --- | --- |
+| Promoted artifact | `hillstreet/open-box:main-a15ceb3` → `sha256:8c8671582ad32cc84f1c0552c43f81a722774b31de82347151a200fb19e86a6a`, pushed 15:54:16Z |
+| Why the first write attempt failed | Run `41212924215` died at `Trigger the promotion` with `select project failed: EOF` because the Zeabur CLI defaults to interactive mode; PR #63 added `--interactive=false` to every call |
+| Service topology | Read-only diagnostics (runs `41214761444`, `41217095410`) show project `6a966cc0a85370460248e847` contains two `PREBUILT_V2` services. `Open-Box` (`6a967b310e919aed614685ce`) owns `open-box-space.zeabur.app` on port `5244` and is the promotion target. `open-box-next` (`6adf9e880ca070d4379475d0`) has **no domains** and builds from `refs/heads/main` — it is the service that kept rebuilding itself, so those rebuilds were never production rollouts |
+| Why `service get` looked broken | The Zeabur CLI returns PascalCase (`ID`, `Name`, `Project.ID`, `Template`, `State`) and prefixes some responses with colored `INFO` lines. The workflow read lowercase keys, printing nulls for a binding that was correct all along. PR #64 reads both shapes and refuses to pin a tag unless the target service owns the origin host |
+| Production after the roll | `/api/public/settings` reports `v0.0.0 (Commit: b145091) - Frontend: v4.2.9 - Build at: 2026-10-31 15:25:53 +0000` (the synthesized commit of this image build; the stamp, not the SHA, identifies it) |
+| Scoped tokens are live | `POST /api/fs/list` with bearer `obk_gatecheck` now returns `Invalid or expired access token` instead of `token is invalidated` |
+| Fork frontend is live | `open-box.space/` serves `/assets/index-D-qN4CSQ.js` and `/assets/index-legacy-aJ_3kIsw.js`, i.e. the `ce49abd` fork dist with Home and Profile in the `/manage` header |
+| Gate assertion defect | The run still reported failure: `Production gate` compared only the **first** `/assets/index-*.js` reference in `index.html`, which is the legacy chunk, so it rejected a correct deployment. Fixed by checking all served assets; the same change adds a `verify only (no write)` mode so re-verification does not need a rollout |
+| Anonymous listing | `POST /api/fs/list` without credentials returns `401`; listing requires auth in this deployment and is recorded, not treated as a failure |
+
+Verified by this promotion: image pinning and container rollout, the PAT discriminator, the token route reply, database-backed public settings through the edge, TLS at the edge, and the served frontend identity. **Not** verified: restart recovery, storage read/write through the mounted volume, and any signed-in MCP or OAuth flow.
+
 
 ## Remaining rollout gates
 
 - Workflow dispatch is available again. Run `41201462506` dispatched `openbox-deploy.yml` successfully and stopped at the rotation precondition, so the earlier 422 ("Actions disabled for the account") gate no longer applies. The remaining gate is the human rotation attestation, not platform access.
-- Backend image build, immutable digest verification and staging rollout are still required. The current Zeabur image label and embedded binary commit differ; do not claim the tag is proof of deployed source.
+- Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository.
+- Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (see the third-pass section). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback.
 - Runtime `x_*` tables are in `public`, not the intended isolated `open_box` schema. Verify an encrypted backup and reversible migration before moving tables or changing search_path.
 - No persistent volume was observed on the service. Do not create a local storage mount on the container filesystem and describe it as durable.
 - Supabase OAuth Server/client registration, exact approved MCP client IDs, explicit SSO subject/account linking, and signed-in MCP tools/list + file read remain unverified. See [CHATGPT_MCP.md](CHATGPT_MCP.md).
