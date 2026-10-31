@@ -100,6 +100,15 @@ func InitialSettings() []model.SettingItem {
 	} else {
 		token = random.Token()
 	}
+	// The session signing secret is seeded from the configuration, so an
+	// operator value (OPENLIST_JWT_SECRET or config.json) is honoured on the
+	// first boot. Afterwards the stored row wins even when the configuration
+	// file is regenerated with a different random secret, which keeps login
+	// sessions valid across a restart or a redeploy.
+	jwtSecret := conf.Conf.JwtSecret
+	if jwtSecret == "" {
+		jwtSecret = random.String(32)
+	}
 	siteVersion := fmt.Sprintf("%s (Commit: %s) - Frontend: %s - Build at: %s", conf.Version, conf.GitCommit, conf.WebVersion, conf.BuiltAt)
 	initialSettingItems := []model.SettingItem{
 		// site settings
@@ -190,6 +199,7 @@ func InitialSettings() []model.SettingItem {
 
 		// single settings
 		{Key: conf.Token, Value: token, Type: conf.TypeString, Group: model.SINGLE, Flag: model.PRIVATE},
+		{Key: conf.JwtSecretKey, Value: jwtSecret, Type: conf.TypeString, Group: model.SINGLE, Flag: model.PRIVATE, Help: `signing key for login sessions; rotating it signs every user out`},
 		{Key: conf.SearchIndex, Value: "none", Type: conf.TypeSelect, Options: "database,database_non_full_text,bleve,meilisearch,none", Group: model.INDEX},
 		{Key: conf.AutoUpdateIndex, Value: "false", Type: conf.TypeBool, Group: model.INDEX},
 		{Key: conf.IgnorePaths, Value: "", Type: conf.TypeText, Group: model.INDEX, Flag: model.PRIVATE, Help: `one path per line`},
