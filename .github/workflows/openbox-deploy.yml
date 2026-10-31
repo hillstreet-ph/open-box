@@ -1,0 +1,235 @@
+name: Open-Box Deploy (Zeabur)
+
+# Promotion of an already-built Docker Hub image to the production Zeabur
+# service, followed by the live production gate recorded in deploy/PRODUCTION.md
+# (item 4: immutable image, health, database connectivity, login, storage,
+# domain/TLS, restart recovery).
+#
+# Preconditions that this workflow deliberately refuses to assume:
+#   * docs/PLATFORM_BACKEND.md states the historically shared Supabase, Docker
+#     Hub and Zeabur management tokens were exposed in chat and must be rotated
+#     before write-enabled deployment is activated. The operator confirms that
+#     rotation here; the workflow never prints the token.
+#   * The retired Zeabur project `ymhiwerqyegvondndkjn` must never be targeted.
+#     The service ID comes from a repository variable and is echoed before any
+#     write so a wrong binding is visible in the run log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker Hub tag of hillstreet/open-box to promote (blank keeps the current tag)"
+        required: false
+        type: string
+        default: ""
+      rotate_confirmed:
+        description: "Provider management tokens were rotated (docs/PLATFORM_BACKEND.md)"
+        required: true
+        type: choice
+        options:
+          - "no — stop"
+          - "yes — allow write"
+        default: "no — stop"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openbox-zeabur-deploy
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
+      ORIGIN_URL: ${{ vars.ORIGIN_URL || 'https://open-box-space.zeabur.app' }}
+      DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'hillstreet' }}
+      IMAGE_NAME: open-box
+      RETIRED_PROJECT_ID: ymhiwerqyegvondndkjn
+
+    steps:
+      - name: Confirm the rotation precondition
+        env:
+          ROTATE_CONFIRMED: ${{ inputs.rotate_confirmed }}
+        run: |
+          set -euo pipefail
+          if [ "$ROTATE_CONFIRMED" != "yes — allow write" ]; then
+            echo "::error::Deployment is gated on rotating the previously exposed management tokens (docs/PLATFORM_BACKEND.md). Re-run with rotate_confirmed = 'yes — allow write' after rotation."
+            exit 1
+          fi
+          echo "Rotation confirmed by ${{ github.actor }}."
+
+      - name: Check required bindings
+        env:
+          ZEABUR_API_TOKEN: ${{ secrets.ZEABUR_API_TOKEN }}
+          ZEABUR_PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          [ -n "$ZEABUR_API_TOKEN" ] || { echo "::error::ZEABUR_API_TOKEN secret is not set"; exit 1; }
+          [ -n "$ZEABUR_PROJECT_ID" ] || { echo "::error::ZEABUR_PROJECT_ID variable is not set"; exit 1; }
+          [ -n "$ZEABUR_SERVICE_ID" ] || { echo "::error::ZEABUR_SERVICE_ID variable is not set"; exit 1; }
+          if [ "$ZEABUR_PROJECT_ID" = "$RETIRED_PROJECT_ID" ]; then
+            echo "::error::ZEABUR_PROJECT_ID points at the retired project; refusing."
+            exit 1
+          fi
+          echo "Target project=$ZEABUR_PROJECT_ID service=$ZEABUR_SERVICE_ID"
+
+      - name: Resolve the immutable image digest
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_TAG:-latest}"
+          if [ "$tag" != "$(printf '%s' "$tag" | tr -dc 'A-Za-z0-9._+-')" ] || [ "${#tag}" -gt 128 ]; then
+            echo "::error::image_tag must be a plain Docker tag (letters, digits, . _ + -)"
+            exit 1
+          fi
+          json=$(curl -fsSL --max-time 20 "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$IMAGE_NAME/tags/$tag")
+          digest=$(echo "$json" | jq -r '.digest // empty')
+          pushed=$(echo "$json" | jq -r '.last_updated // empty')
+          if [ -z "$digest" ]; then
+            echo "::error::$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$tag has no manifest on Docker Hub"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Promoting $DOCKERHUB_NAMESPACE/$IMAGE_NAME:$tag"
+          echo "  digest: $digest"
+          echo "  pushed: $pushed"
+
+      - name: Capture the current state (rollback reference)
+        env:
+          ZEABUR_API_TOKEN: ${{ secrets.ZEABUR_API_TOKEN }}
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes zeabur@latest auth login --token "$ZEABUR_API_TOKEN" >/dev/null
+          npx --yes zeabur@latest service get --id "$ZEABUR_SERVICE_ID" --json > before-service.json
+          jq -r '{uid: .uid, name: .name, projectID: .projectID, updatedAt: .updatedAt}' before-service.json
+          npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json > before-deployment.json || echo '{}' > before-deployment.json
+          echo "previous deployment state: $(jq -r '.state // .status // "unknown"' before-deployment.json)"
+          echo "$ORIGIN_URL" >/dev/null
+          before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" | jq -r '.data.version // empty')
+          echo "before_version=$before_version" >> "$GITHUB_OUTPUT"
+          echo "reported before build: ${before_version:-none}"
+        id: before
+
+      - name: Trigger the promotion
+        env:
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if [ "$IMAGE_TAG" = "latest" ] && [ -z "$INPUT_IMAGE_TAG" ]; then
+            echo "Re-pulling the tracked tag without changing it (service redeploy)"
+            npx --yes zeabur@latest service redeploy --id "$ZEABUR_SERVICE_ID" --yes
+          else
+            echo "Pinning the service image tag to $IMAGE_TAG"
+            npx --yes zeabur@latest service update tag --id "$ZEABUR_SERVICE_ID" --tag "$IMAGE_TAG" --yes
+          fi
+
+      - name: Wait for the service to report ready
+        env:
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+          BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 900 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json 2>/dev/null \
+              | jq -r '.state // .status // "unknown"' 2>/dev/null || echo unknown)
+            serving=$(curl -fsS --max-time 15 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
+            echo "$(date -u +%H:%M:%S) deployment state: $state | serving: ${serving:-unreachable}"
+            case "$state" in
+              FAILURE|FAILED|CRASH|CrashLoopBackOff)
+                echo "::error::deployment reported $state; inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
+                exit 1 ;;
+            esac
+            if [ -n "$serving" ] && [ "$serving" != "$BEFORE_VERSION" ]; then
+              echo "The origin now reports a new build; the container rolled."
+              exit 0
+            fi
+            case "$state" in
+              SUCCESS|READY|Succeeded|succeeded) echo "deployment reported $state"; exit 0 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::neither the deployment API nor the reported build stamp confirmed a rollout within 15 minutes."
+          echo "Inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
+          exit 1
+
+      - name: Production gate — health, PAT routes, database-backed reads, storage, TLS
+        env:
+          EXPECTED_TAG: ${{ steps.image.outputs.tag }}
+          BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::production gate failed: $1"; exit 1; }
+
+          code=$(curl -sS -o /tmp/ping -w "%{http_code}" --max-time 20 "$SITE_URL/ping") || fail "edge /ping unreachable"
+          [ "$code" = "200" ] && [ "$(cat /tmp/ping)" = "pong" ] || fail "/ping did not return pong"
+
+          # A PAT-shaped bearer must be answered by the token middleware, not by
+          # the legacy session parser. Old binaries reply "token is invalidated";
+          # the scoped-token build replies "Invalid or expired access token".
+          pat_probe=$(curl -fsS --max-time 20 -X POST "$ORIGIN_URL/api/fs/list" \
+            -H 'Authorization: obk_gatecheck' -H 'Content-Type: application/json' \
+            -d '{"path":"/","page_number":1,"page_size":1}' || true)
+          echo "PAT discriminator reply: ${pat_probe:-<non-200>}"
+          case "$pat_probe" in
+            *"Invalid or expired access token"*) ;;
+            *"token is invalidated"*) fail "the running binary predates scoped personal access tokens" ;;
+            *) fail "unexpected PAT discriminator reply" ;;
+          esac
+
+          # Unmatched /api paths fall through to the SPA, so a JSON answer proves
+          # the token routes exist.
+          tok_json=$(curl -sS --max-time 20 "$ORIGIN_URL/api/me/token/list" -H 'Authorization: obk_gatecheck' || true)
+          case "$tok_json" in
+            *"<html"*|*"<!DOCTYPE"*) fail "/api/me/token/list is not routed (SPA fallback)" ;;
+            '{"code"'*) ;;
+            *) fail "unexpected /api/me/token/list reply: ${tok_json:0:120}" ;;
+          esac
+
+          # Database-backed public settings through the edge (schema + pooler).
+          settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings")
+          echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null || fail "public settings payload is empty"
+          version=$(echo "$settings" | jq -r '.data.version // empty')
+          echo "serving version: $version"
+          [ "$version" != "$BEFORE_VERSION" ] || fail "the reported build stamp did not change; the promotion did not roll the container"
+
+          # Anonymous listing proves the storage driver and mount table read back.
+          ls_json=$(curl -sS --max-time 20 -X POST "$SITE_URL/api/fs/list" -H 'Content-Type: application/json' -d '{"path":"/"}' || true)
+          case "$ls_json" in
+            '{"code":200'*) ;;
+            '{"code":401'*|'{"code":403'*) echo "listing requires auth in this deployment; recorded as expected" ;;
+            *) fail "unexpected /api/fs/list reply: ${ls_json:0:120}" ;;
+          esac
+
+          # TLS and gateway headers.
+          tls=$(curl -sS -o /dev/null -w "%{ssl_verify_result}" --max-time 20 "$SITE_URL/ping")
+          [ "$tls" = "0" ] || fail "TLS verification returned $tls"
+          curl -sSI --max-time 20 "$SITE_URL/ping" | grep -qi "x-zeabur" || echo "::warning::no x-zeabur header observed at the edge; confirm the Worker still fronts the origin"
+
+          echo "Production gate passed for $EXPECTED_TAG."
+
+      - name: Report the running artifact
+        if: always()
+        env:
+          ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+        run: |
+          set -uo pipefail
+          echo "### Open-Box promotion report" >> "$GITHUB_STEP_SUMMARY"
+          echo "- tag: \`${{ steps.image.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- digest: \`${{ steps.image.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- build before: \`${{ steps.before.outputs.before_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- build after: \`$(curl -sS --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // "unreachable"')\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- service: \`${{ vars.ZEABUR_PROJECT_ID }}` / \`${ZEABUR_SERVICE_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "- rollback: \`zeabur service update tag --id $ZEABUR_SERVICE_ID --tag <previous tag> --yes\` (volume \`open-box-data\` must be kept)" >> "$GITHUB_STEP_SUMMARY"
+          fi

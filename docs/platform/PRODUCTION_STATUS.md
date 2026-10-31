@@ -19,6 +19,22 @@ Branding version `173a3b01-c790-410f-8753-5b9ae800b9dc` passed exact-version roo
 
 The temporary Worker version URLs were disabled again after validation. Open-Box PRs #35, #38 and #39 were merged. The latest edge source is recorded in PR #38; this does not imply the older backend binary was upgraded.
 
+## Promotion attempt: 2026-10-31, scoped personal access tokens
+
+Verified against the live services on 2026-10-31 (UTC).
+
+| Fact | Evidence |
+| --- | --- |
+| Merged backend source | `e73f3658` (merge of PR #58) on `main`; staging binary built from it passed the full PAT suite |
+| CI images for `e73f3658` | Docker Hub `hillstreet/open-box:main-e73f365` and `:latest` at manifest `sha256:a465ba5b14e7d527e212949d67c0176b32ee2dfafd9f06841ea885823675f407`, pushed 09:19:14/09:19:16Z; a `workflow_dispatch` re-run pushed `:latest` `sha256:67abedf6533b2dbe0edb12ca7c9b01764eb51c875f0589616dd88f5e30e8aafb` at 10:53Z |
+| Registry namespace | CI pushes to the Docker Hub account behind the `DOCKERHUB_USERNAME` secret, which is `hillstreet`. The repository variable `DOCKERHUB_ORG_NAME=openclose8` does not describe these artifacts; do not use it to identify them |
+| Running production binary | `/api/public/settings` reports `Build at: 2026-10-31 08:50:39 +0000`, the build stamp of the `main-108c1cb` image (PR #59 docs, before the token merge) |
+| PAT behaviour probe | `POST /api/fs/list` with bearer `obk_*` returns `{"code":401,"message":"token is invalidated"}` at both the origin and `open-box.space`; the token-aware build returns `Invalid or expired access token`. `/api/me/token/list` still falls through to the SPA HTML |
+| Auto-deploy | Neither the 09:19 nor the 10:53 `:latest` push rolled the service within an hour, so promotion needs an explicit Zeabur action |
+| Frontend | `FRONTEND_REPO` now points at `hillstreet-ph/OpenList-Frontend`, whose first release `v4.2.9` publishes the `ce49abd` dist archive (Home and Profile moved into the `/manage` header). Earlier images used the upstream `OpenListTeam/OpenList-Frontend` release, so the merged header change was not in any built image before this |
+
+Blocker, stated plainly: this environment has no Zeabur write access — no CLI session (`zeabur auth status` reports not logged in), no dashboard login in the connected browser, and the `ZEABUR_API_TOKEN`/`ZEABUR_TOKEN` values exist only as write-only GitHub Actions secrets, which the repository gates on rotation (see [PLATFORM_BACKEND.md](../PLATFORM_BACKEND.md)). `.github/workflows/openbox-deploy.yml` performs the promotion and this gate; it is dispatched by a human who confirms rotation.
+
 ## Remaining rollout gates
 
 - GitHub Actions workflow dispatch returned 422: Actions disabled for the user/organization. Repository settings already report `enabled=true`; changing the repository permission policy does not resolve this account-level gate.
