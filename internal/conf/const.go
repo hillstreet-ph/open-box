@@ -100,6 +100,7 @@ const (
 
 	// single
 	Token         = "token"
+	JwtSecretKey  = "jwt_secret"
 	IndexProgress = "index_progress"
 
 	// SSO
