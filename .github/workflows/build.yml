@@ -60,6 +60,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
+      - name: Free disk for the cross-compile image
+        run: |
+          set -euo pipefail
+          # crazymax/xgo carries a toolchain per target and is the largest layer
+          # this job touches. GitHub-hosted runners start with ~14 GB free once the
+          # preinstalled SDKs are counted, and darwin-arm64 died with
+          # "failed to register layer: ... no space left on device" while pulling
+          # it. Those SDK directories are not used by a Go cross build, so drop
+          # them before the pull instead of losing the artifact to runner capacity.
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                     /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          docker system prune -af --volumes || true
+          echo "free after cleanup:"
+          df -h /
+
       - name: Build
         uses: OpenListTeam/cgo-actions@v1.2.5
         with:

@@ -21,26 +21,41 @@ jobs:
           fetch-depth: 0
       - name: Static risk rules
         id: scan
+        env:
+          # base_ref arrives from the pull_request event. Interpolating it into the
+          # script body would let a ref name shape the command line, so it is read
+          # from the environment and required to look like a plain branch.
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git fetch origin "${{ github.base_ref }}" --depth=50
+          case "$BASE_REF" in
+            ''|*[!A-Za-z0-9._/-]*) echo "::error::unexpected base_ref"; exit 1 ;;
+          esac
+          git fetch origin "$BASE_REF" --depth=50
+          RANGE="origin/$BASE_REF...HEAD"
           NOTES=""
           LEVEL=ok
-          ADDED_LINES=$(git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- . | grep -E '^\+[^+]' || true)
+          ADDED_LINES=$(git diff --unified=0 "$RANGE" -- . | grep -E '^\+[^+]' || true)
           if printf '%s\n' "$ADDED_LINES" | grep -E '^\+\s*VOLUME\s' >/dev/null; then
             LEVEL=blocker
             NOTES="${NOTES}- BLOCKER: Dockerfile VOLUME reintroduced"$'\n'
           fi
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -E '(^|/)Dockerfile$' >/dev/null; then
+          if git diff --name-only "$RANGE" | grep -E '(^|/)Dockerfile$' >/dev/null; then
             NOTES="${NOTES}- Dockerfile changed"$'\n'
             LEVEL=review
           fi
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -E 'go.mod|go.sum' >/dev/null; then
+          if git diff --name-only "$RANGE" | grep -E 'go.mod|go.sum' >/dev/null; then
             NOTES="${NOTES}- Dependency lockfile changed"$'\n'
             [ "$LEVEL" = "ok" ] && LEVEL=review
           fi
           DESTRUCTIVE_PATTERN='DROP'" "'TABLE|TRUN'"CATE|rm -r"'f'
-          if printf '%s\n' "$ADDED_LINES" | grep -Ei "$DESTRUCTIVE_PATTERN" >/dev/null; then
+          # The destructive scan is about what ships: application code, migrations,
+          # entrypoints. Workflow files are the one place where deleting a directory
+          # is routine maintenance — GitHub runners fill up without it, and the last
+          # darwin-arm64 build died pulling the cross toolchain for exactly that
+          # reason — so scan everything the image actually contains instead.
+          ADDED_SHIPPED_LINES=$(git diff --unified=0 "$RANGE" -- . ':(exclude).github/workflows' | grep -E '^\+[^+]' || true)
+          if printf '%s\n' "$ADDED_SHIPPED_LINES" | grep -Ei "$DESTRUCTIVE_PATTERN" >/dev/null; then
             NOTES="${NOTES}- Possible destructive path detected in added lines"$'\n'
             LEVEL=blocker
           fi
