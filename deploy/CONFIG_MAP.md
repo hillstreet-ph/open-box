@@ -77,7 +77,7 @@ matching-key, backup/restore, and rollback requirements before any cutover.
 | Surface | Store |
 |---------|-------|
 | OpenList admin login | Hashed in `x_users`; bootstrap via Zeabur `OPENLIST_ADMIN_PASSWORD` on first boot only |
-| LDAP sign-in | `x_settings` `ldap_*` rows, not environment values. `ldap_login_enabled` is a PUBLIC setting and the sign-in page routes the Login button to LDAP while it reads as available, so an enabled-but-addressless directory used to replace the password prompt for everyone; it is now published only when usable. To change it from outside the UI: `UPDATE public.x_settings SET value='false' WHERE key='ldap_login_enabled';` then restart, because a bare SQL write does not reload the setting cache |
+| LDAP sign-in | `x_settings` `ldap_*` rows, not environment values. `ldap_login_enabled` is a PUBLIC setting and the sign-in page routes the Login button to LDAP while it reads as available, so an enabled-but-addressless directory used to replace the password prompt for everyone; since `main-ef241d2` it is published only when usable — the stored row is untouched, the public answer is not. Production currently holds `ldap_login_enabled='true'` with an empty `ldap_server`, and publishes `false` because of it. To set a directory, use Settings › LDAP. To force the row off from outside the UI: `UPDATE public.x_settings SET value='false' WHERE key='ldap_login_enabled';` then restart, because a bare SQL write does not reload the setting cache |
 | Supabase Auth (GitHub) | Supabase Auth providers + GitHub OAuth app |
 | Worker session cookies | Cloudflare Worker after `/auth/callback` |
 
