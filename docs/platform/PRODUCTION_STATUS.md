@@ -109,6 +109,18 @@ The review round on PR #66 hardened four details of that first cut, all of them 
 - the signing key is behind `SigningKey()`/`SetSigningKey()` guarded by an `RWMutex` instead of the exported `SecretKey` global, because the settings-change callback replaces it while requests are in flight. `TestSigningKeyRotationIsVisibleToConcurrentRequests` runs clean under `go test -race ./server/common`.
 - one normalization point, `sessionCredential`, is used both to hash the credential and to read its expiry. `LogOut` is handed the raw `Authorization` header, so hashing exactly what arrived would store a revocation under a value no request path looks up when a client sends the `"Bearer "` form at sign-out. `TestLogoutAcceptsTheAuthorizationHeaderForm` pins that invariant. `internal/model/revoked_session.go` also declares `size:64` on the hash column so an index-backed varchar has a bounded width on MySQL deployments.
 
+The review round landed as PR #66 → `35a4ce0` on `main`, and the same binary was re-checked over HTTP against the data directory left by the pre-review run (no credentials involved: the two sessions were the ones the earlier build had already issued and revoked):
+
+| Check on the reviewed binary | Result |
+| --- | --- |
+| Boot 4, `GET /api/me` with the session the previous build issued and never signed out | `200` — durability survived a full rebuild, not just a restart |
+| Boot 4, `GET /api/me` with the session the previous run signed out | `401 token is invalidated` — the persisted revocation is read by the new code |
+| Boot 5 (a second restart of the reviewed binary) | same: live session `200`, revoked session `401` |
+| `POST /api/fs/list` with the live session | `500 failed get storage: storage not found`, i.e. authentication passed and the request reached the storage layer |
+| `x_revoked_sessions` in the sqlite data directory | present, with the boot-4 row still holding the boot-2 revocation |
+
+The corrected gate from PR #65 was also exercised against live production in `verify only (no write)` mode (run `41231810436`, success, 18:56Z): `/ping` → `pong`, a bogus `obk_*` bearer answered `Invalid or expired access token` rather than `token is invalidated`, `/api/public/settings` read from the database through the edge, TLS verified, and the served entry assets were `/assets/index-D-qN4CSQ.js` + `/assets/index-legacy-aJ_3kIsw.js`, i.e. the fork frontend. `Production gate passed for latest.` — the previous run's failure really was the legacy-chunk false negative, not a bad deployment.
+
 One consequence for the rollout: the first boot of this build seeds `jwt_secret` from whatever the running container's config file holds, so the sessions issued by earlier builds still stop working once. Sign in again after the promotion and every later restart keeps that session.
 
 
