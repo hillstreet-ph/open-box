@@ -14,7 +14,7 @@ Agent Assistant is an internal file helper in the lower-left dock. Integrations 
 | Rename        | Shows exact path and new name; never overwrites                                  |
 | Copy          | Shows source, destination and at most 20 names; reports queued tasks accurately  |
 
-Deletion, moving, permission changes, administrator settings, secrets, shell execution and arbitrary external requests are excluded. Requests outside the allowlist produce instructions or a rejected plan. Filesystem permissions remain enforced by the native Open-Box API for each operation. Public guests and disabled users cannot use the assistant.
+The assistant uses the configured AI provider: Workers AI by default, or an OpenAI-compatible endpoint configured by an administrator (see [AI provider configuration](#ai-provider-configuration)). Deletion, moving, permission changes, administrator settings, secrets, shell execution and arbitrary external requests are excluded. Requests outside the allowlist produce instructions or a rejected plan. Filesystem permissions remain enforced by the native Open-Box API for each operation. Public guests and disabled users cannot use the assistant.
 
 The widget reads the same raw localStorage `token` used by the upstream frontend. Its requests use same-origin Authorization headers. A changed sign-in clears the pending action and conversation. User text and model output are rendered as text, never HTML. An ambiguous write failure is never retried automatically.
 
@@ -29,8 +29,11 @@ The widget reads the same raw localStorage `token` used by the upstream frontend
 | `/settings/integrations/google-drive` | GET    | Open-Box Google Drive setup guide                      |
 | `/settings/integrations/dropbox`      | GET    | Open-Box Dropbox setup guide                           |
 | `/settings/integrations/onedrive`     | GET    | Open-Box OneDrive setup guide                          |
+| `/settings/ai`                        | GET    | AI provider settings page                              |
+| `/api/open-box/ai/provider`           | GET/PUT/DELETE | Read, save or reset the AI provider           |
+| `/api/open-box/ai/provider/test`       | POST   | Send one connection probe to the saved provider        |
 
-Requires existing AI and ORIGIN_URL bindings. Assistant requests always authenticate against `/api/me`, including when the gateway's public file listing is enabled. API responses are not cached. No new database schema is required.
+Requires existing AI and ORIGIN_URL bindings, the `AI_CONFIG` KV binding and the `AI_CONFIG_KEY` Worker secret. Assistant requests always authenticate against `/api/me`, including when the gateway's public file listing is enabled. API responses are not cached. No new database schema is required.
 
 ## GitHub SSO deployment checklist
 
@@ -66,7 +69,25 @@ Supabase GitHub OAuth is a separate flow and uses the project's `/auth/v1/callba
 | Sentry       | `hillstreet/open-box`                                                  | Project read works; no unresolved issues in the checked 24-hour window, which does not prove SDK ingestion   |
 | Open-Connect | Existing personal gateway                                              | Auto and discovery work; no native Open-Box connection returned by provider inspection                       |
 
-The assistant uses the existing Workers AI binding. Binding presence is reported as Configured; only a signed-in model execution proves that operation. Keep provider tokens and native account credentials in their existing protected stores. Mobile remote-tool access is separate from installing a desktop-only MCP package.
+The assistant uses the existing Workers AI binding by default. Binding presence is reported as Configured; only a signed-in model execution proves that operation. Keep provider tokens and native account credentials in their existing protected stores. Mobile remote-tool access is separate from installing a desktop-only MCP package.
+
+## AI provider configuration
+
+Added 2026-10-31 under issue #56. Administrators can point the assistant and `/ai/chat` at an OpenAI-compatible endpoint such as the HillStreet open-connect gateway, or keep Workers AI.
+
+- The default provider is Workers AI. Selecting `workers-ai` deletes the stored configuration.
+- `openai-compatible` requires an HTTPS base URL and a model name; the gateway appends `/chat/completions`. Example: `https://gateway.open-connect.site/v1` with the gateway's model id.
+- Only native administrators (role `2`) may read or change the setting. Authorization is the caller's own OpenList token verified against origin `/api/me`; no admin credential is stored in the gateway.
+- Cross-origin writes are rejected by the same Origin check as the other gateway write routes.
+- Configuration lives in KV namespace `open-box-ai-config` (binding `AI_CONFIG`) under `provider:default`. The API key is sealed with AES-256-GCM using a key derived from the `AI_CONFIG_KEY` Worker secret; only ciphertext, IV and a `••••last4` hint are stored. GET and PUT never return the key.
+- A missing KV binding or missing/short `AI_CONFIG_KEY` fails explicitly with `ai_settings_encryption_unavailable`; it never silently falls back to a plaintext or vendor path.
+- Base URLs must be HTTPS without userinfo, query or fragment. Hosts resolving into private, loopback, link-local, `.local` or `.internal` space are rejected, and IPv6 literals are rejected outright because URL normalization can rewrite mapped addresses such as `[::ffff:127.0.0.1]`; use a DNS name instead. Model names are limited to `[A-Za-z0-9._:/@+-]`, 1–128 characters.
+- Provider failures are fail-closed: the gateway reports `provider_request_failed`, `provider_rate_limited` or `provider_response_invalid` and does not retry with another vendor. Upstream response bodies and the key never appear in a gateway error.
+- Embeddings (`/ai/embed`) stay on Workers AI regardless of the chat provider.
+- Saving with a blank key keeps the existing sealed credential; the first save for `openai-compatible` requires a key. Reset deletes the record and returns the assistant to Workers AI.
+- Delete the KV record rather than editing it by hand if a credential must be withdrawn. Rotating `AI_CONFIG_KEY` makes existing ciphertext unreadable and requires re-saving the key.
+
+Operational verification: sign in as an administrator, save a provider at `/settings/ai`, press Test connection, then confirm `/api/open-box/ai/provider` returns `api_key_set: true` with a masked hint and no key, `/ai/health` reports the same provider, and an assistant proposal still requires confirmation. `/api/open-box/ai/provider` must return 401 without a session.
 
 ## Validation and release
 

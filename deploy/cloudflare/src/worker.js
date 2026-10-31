@@ -1,9 +1,18 @@
 import { handleAssistant } from "./assistant.js";
 import { ASSISTANT_WIDGET } from "./assistant-widget.js";
+import {
+  ProviderError,
+  chatCompletion,
+  clearProviderConfig,
+  providerStatus,
+  publicProviderConfig,
+  readRequestJson,
+  saveProviderConfig,
+  testProvider,
+} from "./ai-provider.js";
 
 const ACCESS_COOKIE = "open_box_access";
 const REFRESH_COOKIE = "open_box_refresh";
-const AI_TEXT_MODEL = "@cf/meta/llama-3.2-3b-instruct";
 const AI_EMBED_MODEL = "@cf/baai/bge-m3";
 const OPEN_BOX_BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title"><title id="title">Open-Box</title><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a78bfa"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs><rect width="256" height="256" rx="56" fill="#09090b"/><path d="M43 82 128 38l85 44-85 44-85-44Zm0 23 73 38v76l-73-40v-74Zm170 0v74l-73 40v-76l73-38Z" fill="url(#g)"/><path d="m82 82 46-24 46 24-46 24-46-24Z" fill="#ede9fe" fill-opacity=".92"/></svg>`;
 
@@ -306,12 +315,13 @@ async function probe(url, init = {}) {
 }
 
 export async function integrationStatus(env) {
-  const [origin, settings, supabase] = await Promise.all([
+  const [origin, settings, supabase, ai] = await Promise.all([
     probe(`${env.ORIGIN_URL}/ping`),
     probe(`${env.ORIGIN_URL}/api/public/settings`),
     probe(`${env.SUPABASE_URL}/auth/v1/health`, {
       headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY },
     }),
+    providerStatus(env),
   ]);
   let openList = { title: "Open-Box", githubSso: false };
   if (settings.ok) {
@@ -353,10 +363,17 @@ export async function integrationStatus(env) {
     },
     {
       id: "workers-ai",
-      name: "Workers AI",
-      state: env.AI ? "configured" : "action_required",
+      name:
+        ai.provider === "openai-compatible"
+          ? "AI provider · custom"
+          : "Workers AI",
+      state: ai.available ? "configured" : "action_required",
       detail:
-        "AI binding; model execution requires a signed-in assistant check",
+        ai.provider === "openai-compatible"
+          ? `OpenAI-compatible model ${ai.model}; test it from AI settings`
+          : ai.available
+            ? "AI binding; model execution requires a signed-in assistant check"
+            : "Configure an API key and base URL in AI settings",
     },
     {
       id: "docker",
@@ -433,7 +450,7 @@ function integrationSettingsPage(appName, status) {
 <h2>Core services</h2><section class="services">${services}</section>
 <h2>Storage account connections</h2>
 <section class="grid">${cards}</section>
-<div class="actions"><a class="primary" href="/@manage">Open administrator settings</a><a class="secondary" href="/api/open-box/integrations/status">View status API</a><a class="secondary" href="/">Return to files</a></div>
+<div class="actions"><a class="primary" href="/@manage">Open administrator settings</a><a class="secondary" href="/settings/ai">Configure AI provider</a><a class="secondary" href="/api/open-box/integrations/status">View status API</a><a class="secondary" href="/">Return to files</a></div>
 <ol class="steps"><li>Sign in to the administrator account; enable GitHub SSO only after its configuration is verified.</li><li>Authorize one provider account at a time.</li><li>Give every account a unique slug, such as <strong>personal-01</strong> or <strong>workspace-01</strong>.</li><li>Choose only the services and read-only scopes that account needs.</li><li>Verify listing and read access before enabling collection.</li><li>Use <strong>copy</strong>, never sync, when collecting into master storage.</li></ol>
 <footer>No credentials are accepted or retained by this page. OAuth secrets and refresh tokens belong only in the server-side storage configuration.</footer>
 </main></body></html>`,
@@ -656,21 +673,14 @@ async function handleAuth(request, env, url) {
 }
 
 async function handleAi(request, env, url) {
-  if (!env.AI) {
-    return json(
-      {
-        error: "workers_ai_not_bound",
-        message: "AI binding missing on open-box-gateway",
-      },
-      503,
-    );
-  }
+  const ai = await providerStatus(env);
 
   if (url.pathname === "/ai/health" && request.method === "GET") {
     return json({
       service: "open-box-gateway",
-      ai: "ready",
-      models: { text: AI_TEXT_MODEL, embed: AI_EMBED_MODEL },
+      ai: ai.available ? "ready" : "unavailable",
+      provider: ai.provider,
+      models: { text: ai.model || null, embed: AI_EMBED_MODEL },
     });
   }
 
@@ -703,26 +713,39 @@ async function handleAi(request, env, url) {
     }
     messages.push({ role: "user", content: prompt });
     try {
-      const result = await env.AI.run(AI_TEXT_MODEL, {
+      const result = await chatCompletion(env, {
         messages,
-        max_tokens: Math.min(Number(body.max_tokens) || 512, 1024),
+        maxTokens: Math.min(Number(body.max_tokens) || 512, 1024),
         temperature: Math.min(Math.max(Number(body.temperature) || 0.4, 0), 1),
       });
-      const text = result?.response ?? result?.result ?? result;
       return json({
-        model: AI_TEXT_MODEL,
-        text,
-        raw: typeof result === "object" ? result : undefined,
+        model: result.model,
+        provider: result.provider,
+        text: result.text,
+        raw: result.raw,
       });
     } catch (err) {
+      const known = err instanceof ProviderError;
       return json(
-        { error: "ai_failed", message: String(err?.message || err) },
-        502,
+        {
+          error: known ? err.code : "ai_failed",
+          message: known ? err.message : "AI request failed.",
+        },
+        known ? err.status : 502,
       );
     }
   }
 
   if (url.pathname === "/ai/embed" && request.method === "POST") {
+    if (!env.AI) {
+      return json(
+        {
+          error: "workers_ai_not_bound",
+          message: "Embeddings require the Workers AI binding",
+        },
+        503,
+      );
+    }
     const body = await request.json().catch(() => ({}));
     const text = typeof body.text === "string" ? body.text.trim() : "";
     if (!text || text.length > 8000) {
@@ -735,9 +758,9 @@ async function handleAi(request, env, url) {
       const result = await env.AI.run(AI_EMBED_MODEL, { text: [text] });
       const embedding = result?.data?.[0] ?? result?.data ?? result;
       return json({ model: AI_EMBED_MODEL, embedding });
-    } catch (err) {
+    } catch {
       return json(
-        { error: "ai_failed", message: String(err?.message || err) },
+        { error: "ai_failed", message: "Embedding request failed." },
         502,
       );
     }
@@ -746,6 +769,219 @@ async function handleAi(request, env, url) {
   return json(
     { error: "not_found", paths: ["/ai/health", "/ai/chat", "/ai/embed"] },
     404,
+  );
+}
+
+async function originSession(env, authorization) {
+  if (!authorization || authorization.length > 8192)
+    return { error: json({ error: "sign_in_required" }, 401) };
+  let response;
+  try {
+    response = await fetch(new URL("/api/me", env.ORIGIN_URL), {
+      headers: { Authorization: authorization },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    return { error: json({ error: "identity_check_failed" }, 502) };
+  }
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.code !== 200)
+    return { error: json({ error: "sign_in_required" }, 401) };
+  const user = payload?.data;
+  if (!Number.isInteger(user?.id) || user.disabled || user.role !== 2)
+    return { error: json({ error: "admin_required" }, 403) };
+  return { user };
+}
+
+function providerErrorResponse(error) {
+  if (error instanceof ProviderError)
+    return json({ error: error.code, message: error.message }, error.status);
+  return json(
+    { error: "invalid_request", message: "The request could not be processed." },
+    400,
+  );
+}
+
+async function handleProviderSettings(request, env, url) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== url.origin)
+    return json({ error: "origin_not_allowed" }, 403);
+  const session = await originSession(
+    env,
+    request.headers.get("Authorization"),
+  );
+  if (session.error) return session.error;
+  try {
+    if (request.method === "GET") return json(await publicProviderConfig(env));
+    if (request.method === "PUT")
+      return json(
+        await saveProviderConfig(
+          env,
+          await readRequestJson(request),
+          session.user,
+        ),
+      );
+    if (request.method === "DELETE")
+      return json(await clearProviderConfig(env));
+    return json(
+      { error: "method_not_allowed" },
+      405,
+      { allow: "GET, PUT, DELETE" },
+    );
+  } catch (error) {
+    return providerErrorResponse(error);
+  }
+}
+
+async function handleProviderTest(request, env, url) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== url.origin)
+    return json({ error: "origin_not_allowed" }, 403);
+  const session = await originSession(
+    env,
+    request.headers.get("Authorization"),
+  );
+  if (session.error) return session.error;
+  try {
+    return json(await testProvider(env));
+  } catch (error) {
+    return providerErrorResponse(error);
+  }
+}
+
+function providerSettingsPage(appName) {
+  const escapedName = String(appName || "Open-Box").replace(/[<>&"']/g, "");
+  return new Response(
+    `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>AI provider · ${escapedName}</title>
+<style>
+:root{color-scheme:dark;--bg:#09090b;--panel:#18181b;--line:#3f3f46;--text:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#24143d 0,var(--bg) 38%);color:var(--text);font:16px/1.55 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:56px 22px}.eyebrow{color:#c4b5fd;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0}h1{font-size:clamp(1.8rem,5vw,2.8rem);line-height:1.1;margin:.3em 0}.muted{color:var(--muted)}.card{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:18px;padding:22px;margin:22px 0}label{display:block;font-weight:600;margin:14px 0 6px}input,select{width:100%;padding:11px 12px;border-radius:10px;border:1px solid #52525b;background:#09090b;color:var(--text);font:inherit}input:disabled,select:disabled{opacity:.55}button{border:0;border-radius:10px;padding:11px 16px;font:inherit;font-weight:700;cursor:pointer;margin:16px 8px 0 0}button.primary{background:var(--brand);color:#fff}button.secondary{background:#27272a;color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.5;cursor:wait}.hint{font-size:.86rem;color:var(--muted);margin:6px 0 0}.status{margin-top:18px;padding:12px 14px;border-radius:12px;border:1px solid #3f3f46;background:#111113;font-size:.92rem}.status.ok{border-color:#166534;background:#052e16;color:#bbf7d0}.status.error{border-color:#854d0e;background:#422006;color:#fde68a}.badge{display:inline-block;border-radius:999px;padding:3px 9px;font-size:.76rem;font-weight:700;background:#2e1065;color:#ddd6fe;border:1px solid #6d28d9}.row{display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap}a{color:#c4b5fd}code{color:#ddd6fe}.warn{font-size:.88rem;color:#fde68a}
+</style></head><body><main>
+<p class="eyebrow">${escapedName} · AI provider</p>
+<h1>Choose the model behind Agent Assistant</h1>
+<p class="muted">Workers AI is the default. You can point the gateway at any OpenAI-compatible endpoint, such as the HillStreet open-connect gateway, by setting its base URL, model, and API key. The key is stored encrypted at rest and is never displayed again.</p>
+<div class="card">
+<div class="row"><strong>Current provider</strong><span class="badge" id="current">Loading…</span></div>
+<label for="provider">Provider</label>
+<select id="provider"><option value="workers-ai">Workers AI (default)</option><option value="openai-compatible">OpenAI-compatible endpoint</option></select>
+<label for="base-url">Base URL</label>
+<input id="base-url" type="url" inputmode="url" placeholder="https://gateway.example.com/v1" autocomplete="off" spellcheck="false">
+<p class="hint">HTTPS only. The gateway appends <code>/chat/completions</code>. A pasted <code>/chat/completions</code> suffix is removed.</p>
+<label for="model">Model</label>
+<input id="model" type="text" placeholder="gpt-4o-mini" autocomplete="off" spellcheck="false">
+<label for="api-key">API key</label>
+<input id="api-key" type="password" placeholder="Paste provider API key" autocomplete="new-password" spellcheck="false">
+<p class="hint" id="key-hint">Loading…</p>
+<button class="primary" id="save" type="button">Save provider</button>
+<button class="secondary" id="test" type="button">Test connection</button>
+<button class="secondary" id="reset" type="button">Reset to Workers AI</button>
+<p class="status" id="status" role="status" aria-live="polite">Checking your session…</p>
+<p class="hint" id="updated"></p>
+</div>
+<p class="warn">Fail-closed: when a custom provider is configured and its request fails, the gateway returns an error instead of silently sending your text to a different vendor. Embeddings remain on Workers AI.</p>
+<p class="muted">Requests are authorized with your native Open-Box session and require an administrator account. <a href="/settings/integrations">Back to Integrations</a> · <a href="/@manage">Administration</a></p>
+</main>
+<script>
+(() => {
+  const token = localStorage.getItem('token') || '';
+  const $ = (id) => document.getElementById(id);
+  const status = $('status');
+  const save = $('save');
+  const test = $('test');
+  const reset = $('reset');
+  let config = null;
+  function say(text, kind) {
+    status.textContent = text;
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function toggle() {
+    const custom = $('provider').value === 'openai-compatible';
+    for (const id of ['base-url', 'model', 'api-key']) $(id).disabled = !custom;
+  }
+  function render(next) {
+    config = next;
+    $('provider').value = next.provider === 'openai-compatible' ? 'openai-compatible' : 'workers-ai';
+    $('base-url').value = next.base_url || '';
+    $('model').value = next.model || '';
+    $('api-key').value = '';
+    $('current').textContent = next.provider === 'openai-compatible' ? 'Custom · ' + next.model : 'Workers AI';
+    $('key-hint').textContent = next.provider === 'openai-compatible'
+      ? (next.api_key_set ? 'A key is stored (' + next.api_key_hint + '). Leave blank to keep it.' : 'No key stored yet.')
+      : 'Not required for Workers AI.';
+    $('updated').textContent = next.updated_at ? 'Last updated ' + next.updated_at : '';
+    toggle();
+  }
+  async function request(path, method, body) {
+    const response = await fetch(path, {
+      method,
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || 'Request failed');
+    return data;
+  }
+  if (!token) {
+    say('Sign in to Open-Box as an administrator, then reload this page.', 'error');
+    for (const button of [save, test, reset]) button.disabled = true;
+    $('current').textContent = 'Sign-in required';
+    return;
+  }
+  request('/api/open-box/ai/provider', 'GET').then((next) => {
+    render(next);
+    say(next.available ? 'Provider is ready.' : 'No model is available yet. Configure a provider or save an API key.', next.available ? 'ok' : 'error');
+  }).catch((error) => {
+    say(error.message, 'error');
+    $('current').textContent = 'Unavailable';
+  });
+  $('provider').addEventListener('change', toggle);
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const provider = $('provider').value;
+      const payload = provider === 'workers-ai' ? { provider } : {
+        provider,
+        base_url: $('base-url').value,
+        model: $('model').value,
+        ...($('api-key').value.trim() ? { api_key: $('api-key').value } : {})
+      };
+      render(await request('/api/open-box/ai/provider', 'PUT', payload));
+      say(provider === 'workers-ai' ? 'Saved. Workers AI is the active provider.' : 'Saved. Run Test connection to verify the endpoint.', 'ok');
+    } catch (error) { say(error.message, 'error'); }
+    finally { save.disabled = false; }
+  });
+  test.addEventListener('click', async () => {
+    test.disabled = true;
+    say('Testing the configured provider…');
+    try {
+      const result = await request('/api/open-box/ai/provider/test', 'POST', {});
+      say('Connected to ' + result.provider + ' (' + result.model + ') in ' + result.latency_ms + ' ms. Reply: ' + result.reply, 'ok');
+    } catch (error) { say(error.message, 'error'); }
+    finally { test.disabled = false; }
+  });
+  reset.addEventListener('click', async () => {
+    reset.disabled = true;
+    try {
+      render(await request('/api/open-box/ai/provider', 'DELETE'));
+      say('Reset. Workers AI is the active provider.', 'ok');
+    } catch (error) { say(error.message, 'error'); }
+    finally { reset.disabled = false; }
+  });
+})();
+</script></body></html>`,
+    {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "content-security-policy":
+          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+      },
+    },
   );
 }
 
@@ -854,6 +1090,12 @@ export default {
     }
     if (url.pathname.startsWith("/api/open-box/assistant/"))
       return handleAssistant(request, env);
+    if (url.pathname === "/settings/ai" && request.method === "GET")
+      return providerSettingsPage(env.APP_NAME);
+    if (url.pathname === "/api/open-box/ai/provider/test")
+      return handleProviderTest(request, env, url);
+    if (url.pathname === "/api/open-box/ai/provider")
+      return handleProviderSettings(request, env, url);
     if (url.pathname === "/open-box-assistant.js" && request.method === "GET")
       return new Response(ASSISTANT_WIDGET, {
         headers: {
