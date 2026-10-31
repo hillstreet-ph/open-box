@@ -1,0 +1,119 @@
+name: Open-Box Zeabur Diagnostics (read-only)
+
+# Read-only inspection of what the production Zeabur service actually is and
+# what artifact it builds. Added because the promotion run failed on a null
+# `service get` and because the service rebuilds itself without any action
+# from CI, which contradicts the "prebuilt image runtime" note in
+# deploy/CONFIG_MAP.md.
+#
+# This workflow performs no write: no redeploy, no tag update, no variable
+# change. Every payload passes a redaction filter first, so environment
+# values, DSNs, passwords and tokens never reach the run log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_id:
+        description: "Service ID to inspect (blank uses ZEABUR_SERVICE_ID)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openbox-zeabur-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ZEABUR_TOKEN: ${{ secrets.ZEABUR_API_TOKEN }}
+      PROJECT_ID: ${{ vars.ZEABUR_PROJECT_ID }}
+      SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+      INPUT_SERVICE_ID: ${{ inputs.service_id }}
+      ORIGIN_URL: ${{ vars.ORIGIN_URL || 'https://open-box-space.zeabur.app' }}
+      SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
+      # Environment values are never printed. Any {key, value} pair — the shape
+      # Zeabur uses for service variables — has its value blanked outright, and
+      # any field whose own name looks like a credential is blanked too, so the
+      # shape of a response stays readable without leaking configuration.
+      REDACT: >-
+        walk(if type=="object" then
+        with_entries(if (.key|ascii_downcase|test("secret|password|token|dsn|credential|api[_-]?key|private[_-]?key|access[_-]?key|authorization|cookie|connectionstring"))
+        then .value="<redacted>" else . end)
+        | if (has("key") and has("value")) then .value="<redacted>" else . end
+        else . end)
+
+    steps:
+      - name: Authenticate
+        run: |
+          set -euo pipefail
+          [ -n "$ZEABUR_TOKEN" ] || { echo "::error::ZEABUR_API_TOKEN is not set"; exit 1; }
+          npx --yes zeabur@latest auth login --token "$ZEABUR_TOKEN" >/dev/null
+          echo "### profile"
+          npx --yes zeabur@latest profile --json 2>/dev/null | jq -r "$REDACT" | head -25 || echo "profile unavailable"
+
+      - name: List projects
+        run: |
+          set -uo pipefail
+          echo "### projects"
+          npx --yes zeabur@latest project list --json 2>/dev/null | jq -c '(.[]? // .projects[]?) | {id, name}' | head -25 || echo "project list unavailable"
+
+      - name: Inspect services in the recorded project
+        run: |
+          set -uo pipefail
+          echo "### services under project $PROJECT_ID"
+          npx --yes zeabur@latest service list --project-id "$PROJECT_ID" --json 2>/dev/null \
+            | jq -r "$REDACT" | head -80 || echo "service list returned nothing for this project"
+
+      - name: Inspect the configured service
+        run: |
+          set -uo pipefail
+          sid="${INPUT_SERVICE_ID:-$SERVICE_ID}"
+          echo "### service get for $sid"
+          npx --yes zeabur@latest service get --id "$sid" --interactive=false --json 2>/dev/null \
+            | jq -r "$REDACT" | head -80 || echo "service get failed for $sid"
+
+      - name: Inspect recent deployments
+        run: |
+          set -uo pipefail
+          sid="${INPUT_SERVICE_ID:-$SERVICE_ID}"
+          echo "### deployment list for $sid"
+          npx --yes zeabur@latest deployment list --service-id "$sid" --json 2>/dev/null \
+            | jq -r "$REDACT" | head -160 || echo "deployment list failed for $sid"
+
+      - name: Record what the edge and the origin are serving
+        run: |
+          set -uo pipefail
+          echo "### origin $ORIGIN_URL"
+          curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null \
+            | jq -r '.data.version // "no version"' || echo "origin settings unavailable"
+          echo "### edge $SITE_URL"
+          curl -fsSL --max-time 20 "$SITE_URL/api/public/settings" 2>/dev/null \
+            | jq -r '.data.version // "no version"' || echo "edge settings unavailable"
+          printf 'served entry asset: '
+          curl -sS --max-time 20 "$SITE_URL/" 2>/dev/null \
+            | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1 || echo none
+          printf 'PAT discriminator reply: '
+          curl -sS --max-time 20 -X POST "$ORIGIN_URL/api/fs/list" \
+            -H 'Authorization: obk_readonly_probe' -H 'Content-Type: application/json' \
+            -d '{"path":"/","page_number":1,"page_size":1}' 2>/dev/null | head -c 120 || echo none
+          echo
+
+      - name: Write the summary
+        run: |
+          set -uo pipefail
+          sid="${INPUT_SERVICE_ID:-$SERVICE_ID}"
+          {
+            echo "### Open-Box Zeabur diagnostics"
+            echo "- inspected service: \`$sid\`"
+            echo "- configured project: \`$PROJECT_ID\`"
+            echo "- writes performed: none"
+            echo
+            echo "Use the redacted payloads above to decide whether promotion pins an image tag"
+            echo "(\`service update tag\`) or updates the source branch the service builds from."
+          } >> "$GITHUB_STEP_SUMMARY"
