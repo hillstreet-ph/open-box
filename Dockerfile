@@ -4,6 +4,11 @@ ARG BASE_IMAGE_TAG=base
 FROM alpine:edge AS builder
 LABEL stage=go-builder
 WORKDIR /app/
+# Which frontend release the embedded dist comes from. build.sh only honours the
+# FRONTEND_REPO environment variable, so without this ARG every image silently
+# ships the upstream OpenListTeam dist regardless of the repository variable.
+ARG FRONTEND_REPO=OpenListTeam/OpenList-Frontend
+ENV FRONTEND_REPO=${FRONTEND_REPO}
 RUN apk add --no-cache bash curl jq gcc git go musl-dev
 COPY go.mod go.sum ./
 RUN go mod download
