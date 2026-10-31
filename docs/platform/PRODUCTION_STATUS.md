@@ -123,12 +123,25 @@ The corrected gate from PR #65 was also exercised against live production in `ve
 
 One consequence for the rollout: the first boot of this build seeds `jwt_secret` from whatever the running container's config file holds, so the sessions issued by earlier builds still stop working once. Sign in again after the promotion and every later restart keeps that session.
 
+### Promotion pending: the session fix is on `main`, not yet on the service
+
+`main` is `35a4ce0` and CI is publishing `hillstreet/open-box:main-35a4ce0` plus `latest` for it; the service still runs `main-a15ceb3`, so production keeps logging everyone out on each restart until that tag is promoted. The workflow resolves the immutable digest itself in `Resolve the immutable image digest`, so the command needs no digest:
+
+```sh
+gh workflow run openbox-deploy.yml --repo hillstreet-ph/open-box \
+  -f image_tag=main-35a4ce0 \
+  -f expected_frontend_asset=index-D-qN4CSQ.js \
+  -f "rotate_confirmed=yes — allow write"
+```
+
+`rotate_confirmed` is the owner's statement that the exposed management tokens were rotated, not something this repository can assert; the `verify only (no write)` mode is the alternative that needs no attestation but also changes nothing. After promoting, re-run the gate in verify-only mode and check the two session properties through the edge: a browser session issued before a restart still authenticates, and a signed-out session stays rejected.
+
 
 ## Remaining rollout gates
 
 - Workflow dispatch is available again. Run `41201462506` dispatched `openbox-deploy.yml` successfully and stopped at the rotation precondition, so the earlier 422 ("Actions disabled for the account") gate no longer applies. The remaining gate is the human rotation attestation, not platform access.
 - Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository.
-- Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (see the third-pass section). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback.
+- Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (see the third-pass section). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback. The next promotion target is `main-35a4ce0`, the session-durability build; it is gated on the rotation attestation (see the promotion-pending section).
 - Runtime `x_*` tables are in `public`, not the intended isolated `open_box` schema. Verify an encrypted backup and reversible migration before moving tables or changing search_path.
 - No persistent volume was observed on the service. Do not create a local storage mount on the container filesystem and describe it as durable. The session fix above works without a volume because both the signing key and the revocations live in the database; after promoting, verify through the edge that a session survives a redeploy and that a logged-out session stays logged out.
 - Supabase OAuth Server/client registration, exact approved MCP client IDs, explicit SSO subject/account linking, and signed-in MCP tools/list + file read remain unverified. See [CHATGPT_MCP.md](CHATGPT_MCP.md).
