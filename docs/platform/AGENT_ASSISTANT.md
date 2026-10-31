@@ -81,7 +81,7 @@ Added 2026-10-31 under issue #56. Administrators can point the assistant and `/a
 - Cross-origin writes are rejected by the same Origin check as the other gateway write routes.
 - Configuration lives in KV namespace `open-box-ai-config` (binding `AI_CONFIG`) under `provider:default`. The API key is sealed with AES-256-GCM using a key derived from the `AI_CONFIG_KEY` Worker secret; only ciphertext, IV and a `••••last4` hint are stored. GET and PUT never return the key.
 - A missing KV binding or missing/short `AI_CONFIG_KEY` fails explicitly with `ai_settings_encryption_unavailable`; it never silently falls back to a plaintext or vendor path.
-- Base URLs must be HTTPS without userinfo, query or fragment, and hosts resolving into private, loopback, link-local, `.local` or `.internal` space are rejected. Model names are limited to `[A-Za-z0-9._:/@+-]`, 1–128 characters.
+- Base URLs must be HTTPS without userinfo, query or fragment. Hosts resolving into private, loopback, link-local, `.local` or `.internal` space are rejected, and IPv6 literals are rejected outright because URL normalization can rewrite mapped addresses such as `[::ffff:127.0.0.1]`; use a DNS name instead. Model names are limited to `[A-Za-z0-9._:/@+-]`, 1–128 characters.
 - Provider failures are fail-closed: the gateway reports `provider_request_failed`, `provider_rate_limited` or `provider_response_invalid` and does not retry with another vendor. Upstream response bodies and the key never appear in a gateway error.
 - Embeddings (`/ai/embed`) stay on Workers AI regardless of the chat provider.
 - Saving with a blank key keeps the existing sealed credential; the first save for `openai-compatible` requires a key. Reset deletes the record and returns the assistant to Workers AI.

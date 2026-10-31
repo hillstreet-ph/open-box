@@ -6,7 +6,9 @@ const MAX_API_KEY = 2048;
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 const PRIVATE_HOST =
   /^(?:localhost|127\.|0\.0\.0\.0$|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
-const PRIVATE_IPV6 = /^\[(?:::1|f[cd][0-9a-f]{0,2}:|fe80:)/;
+// URL normalization rewrites mapped addresses such as [::ffff:127.0.0.1], so
+// every IPv6 literal is rejected instead of classifying them one by one.
+const IPV6_LITERAL = /^\[/;
 
 const MESSAGES = {
   invalid_request: "The request could not be read.",
@@ -117,7 +119,7 @@ export function validateBaseUrl(value) {
   if (
     !host ||
     PRIVATE_HOST.test(host) ||
-    PRIVATE_IPV6.test(host) ||
+    IPV6_LITERAL.test(host) ||
     host.endsWith(".internal") ||
     host.endsWith(".local") ||
     (!host.includes(".") && !host.startsWith("[")) ||
