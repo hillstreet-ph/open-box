@@ -2,6 +2,8 @@
 
 Verified 2026-10-10. Public application: https://open-box.space.
 
+As of 2026-10-31 19:45Z the service runs `hillstreet/open-box:main-35a4ce0` (manifest digest `sha256:06f4e068…`, `Build at: 2026-10-31 19:12:47 +0000`) with the fork frontend's `index-D-qN4CSQ.js`; the table below is the 10-10 snapshot it grew out of, and the fourth-pass section records the promotion that put this build in place.
+
 ## Verified deployment
 
 | Component | Evidence |
@@ -109,16 +111,91 @@ The review round on PR #66 hardened four details of that first cut, all of them 
 - the signing key is behind `SigningKey()`/`SetSigningKey()` guarded by an `RWMutex` instead of the exported `SecretKey` global, because the settings-change callback replaces it while requests are in flight. `TestSigningKeyRotationIsVisibleToConcurrentRequests` runs clean under `go test -race ./server/common`.
 - one normalization point, `sessionCredential`, is used both to hash the credential and to read its expiry. `LogOut` is handed the raw `Authorization` header, so hashing exactly what arrived would store a revocation under a value no request path looks up when a client sends the `"Bearer "` form at sign-out. `TestLogoutAcceptsTheAuthorizationHeaderForm` pins that invariant. `internal/model/revoked_session.go` also declares `size:64` on the hash column so an index-backed varchar has a bounded width on MySQL deployments.
 
+The review round landed as PR #66 → `35a4ce0` on `main`, and the same binary was re-checked over HTTP against the data directory left by the pre-review run (no credentials involved: the two sessions were the ones the earlier build had already issued and revoked):
+
+| Check on the reviewed binary | Result |
+| --- | --- |
+| Boot 4, `GET /api/me` with the session the previous build issued and never signed out | `200` — durability survived a full rebuild, not just a restart |
+| Boot 4, `GET /api/me` with the session the previous run signed out | `401 token is invalidated` — the persisted revocation is read by the new code |
+| Boot 5 (a second restart of the reviewed binary) | same: live session `200`, revoked session `401` |
+| `POST /api/fs/list` with the live session | `500 failed get storage: storage not found`, i.e. authentication passed and the request reached the storage layer |
+| `x_revoked_sessions` in the sqlite data directory | present, with the boot-4 row still holding the boot-2 revocation |
+
+The corrected gate from PR #65 was also exercised against live production in `verify only (no write)` mode (run `41231810436`, success, 18:56Z): `/ping` → `pong`, a bogus `obk_*` bearer answered `Invalid or expired access token` rather than `token is invalidated`, `/api/public/settings` read from the database through the edge, TLS verified, and the served entry assets were `/assets/index-D-qN4CSQ.js` + `/assets/index-legacy-aJ_3kIsw.js`, i.e. the fork frontend. `Production gate passed for latest.` — the previous run's failure really was the legacy-chunk false negative, not a bad deployment.
+
 One consequence for the rollout: the first boot of this build seeds `jwt_secret` from whatever the running container's config file holds, so the sessions issued by earlier builds still stop working once. Sign in again after the promotion and every later restart keeps that session.
+
+### Promotion executed: 2026-10-31 (fourth pass) — the session fix is live
+
+The owner attested that the exposed management credentials were rotated ("Rotated — deploy it"), which is the precondition `rotate_confirmed` encodes, so the write-enabled run went out at 19:44Z and passed in 1m12s (run `41235611739`):
+
+| Step | Result |
+| --- | --- |
+| Confirm the rotation precondition | passed on `rotate_confirmed=yes — allow write` |
+| Resolve the immutable image digest | `main-35a4ce0` → manifest list `sha256:06f4e068b4c16d6b7d45a8d479b759cc350104ad50effdce842b0b89bfebb14c` (amd64 `sha256:9c155d7f…`, arm64 `sha256:0603c131…`) |
+| Capture the current state (rollback reference) | previous version recorded as `Build at: 2026-10-31 15:25:53 +0000`, i.e. `main-a15ceb3` |
+| Trigger the promotion, wait for ready | service reported ready |
+| Production gate | `Production gate passed for main-35a4ce0.` |
+| Report the running artifact | digest above |
+
+Re-checked independently against the edge after the roll:
+
+| Live check | Result |
+| --- | --- |
+| `GET /api/public/settings` | `200` in 0.6 s, `version: v0.0.0 (Commit: 80cbddf) - Frontend: v4.2.9 - Build at: 2026-10-31 19:12:47 +0000` — the new stamp, not the 15:25 one |
+| `Authorization: obk_deadbeef` on `/api/me` | `401 Invalid or expired access token` — the PAT-aware auth layer is what is serving |
+| malformed JWT on `/api/me` | `401 couldn't handle this token` — signature verification, not the old in-memory allow-list |
+| `POST /api/fs/list` as a guest | `401 Guest user is disabled, login please` — authentication is enforced, so browsing needs a session |
+| `GET /` and `/assets/index-D-qN4CSQ.js` | `200`, fork frontend entry chunks served |
+
+What these checks do **not** establish: that a real browser session survives the next production redeploy. That is the headline property of the fix and it needs a signed-in session to observe; the mechanism itself is covered by `server/common/auth_test.go` and by the five boot-to-boot HTTP checks on the staged binary above. Sign in once now — the first boot of this build seeded `jwt_secret` from the container's config file, so sessions issued by earlier builds stop working exactly once — and every later restart keeps it.
+
+## Blank page plus `The operation either timed out or was not allowed.`
+
+A screenshot of open-box.space at 03:37 local on 11-01 showed the boot spinner with ten stacked toasts: five `Token is invalidated` and five `The operation either timed out or was not allowed.`
+
+The second message is not ours. `grep` finds it in neither this repository nor the fork frontend, and the backend and static delivery were both answering in under a second when the site was probed during that window. It is the engine's own text for an XHR that never completed — Chrome and Safari surface it when a request is aborted, which is what a tab restored from sleep, a dropped connection, or a container mid-restart produces. It reaches the user verbatim because the frontend's response interceptor falls back to `error.message` whenever there is no server `message` to show.
+
+That fallback is one of two client-side defects that turn a transient failure into a stuck page, both in the fork frontend:
+
+- An aborted or offline request resolves to `{ code: undefined }`, so `handleResp` shows its toast and takes no further action. With no server reply there is no 401 to react to, and the boot never recovers or explains itself.
+- A 401 redirects to `/@login` but leaves the rejected token in `localStorage` and in the shared `Authorization` default header, so every request the login page's own boot issues is rejected the same way. That is why the same error arrived five times instead of once.
+
+`OpenList-Frontend` PR #3 fixes both: transport failures get an actionable sentence (offline versus 502/503/504 versus a deliberate cancel) through a new `src/utils/request_error.ts`, and `handleResp` clears the credential with `changeToken()` before navigating. The error envelope's shape is untouched on purpose — `pages/home/uploads/multipart.ts` distinguishes a transport failure from a server envelope by `"data" in resp` and `code === -1`, and `hooks/usePath.ts` branches on `code === undefined`. Locally: `pnpm test` 45 pass (5 new), `pnpm lint` 13 errors — the identical count with the change stashed, none in the touched files — and `pnpm build` succeeds with no circular-import warning.
+
+## Developer tokens could not be used by the clients they were built for
+
+Verified against the live service after the fourth promotion, same endpoint and same token, only the header spelling differing:
+
+| `Authorization` on `GET /api/me` | Reply |
+| --- | --- |
+| `obk_deadbeef` | `401 Invalid or expired access token` — the access-token path answered |
+| `Bearer obk_deadbeef` | `401 that's not even a token` — fell through to session parsing |
+| `Bearer obk_deadbeef` on `POST /mcp` | `401 that's not even a token` |
+
+Browsers and the SDK send the token as the whole header value; OAuth-style clients — MCP servers, ChatGPT plugins, most HTTP libraries — send the `Bearer` scheme. PR #66 normalized that scheme at logout only, so a token presented the way those clients present it never reached the access-token check. Recorded in PR #66's own notes as the follow-up: *"a separate PR for consistent scheme handling."*
+
+PR #68 makes `common.Credential` the single normalization point and routes every reader through it — both auth middlewares, `IsPAT`/`ResolvePAT`, `ParseToken`, `AuthMCP` (which also gets the constant-time site-token comparison the middlewares already used) and the WebDAV bearer branch. Two things worth keeping from the review of that fix:
+
+- A first cut of the middleware test asserted on the HTTP status and passed for every credential, broken or not: `ErrorStrResp` answers **HTTP 200** and carries the status in the JSON body. Tests in this area have to read the envelope. Confirmed against the pre-fix code both ways — with the middleware normalization removed the site token sent as `Bearer …` answers `401 that's not even a token`; with `IsPAT`/`ResolvePAT` normalization removed an issued token in the scheme form is not recognized.
+- `AuthMCP` in OAuth mode still does not accept access tokens at all: with `MCP.OAuthIssuer` configured, an `obk_` credential matches neither the site token, nor a session, nor a Supabase ID token. Production reaches `/mcp` through `middlewares.Auth` today (no issuer configured), so PR #68 does make tokens work there; the OAuth-mode branch belongs with the MCP warehouse surface rather than riding on a normalization change.
+
+## Blocked: GitHub Actions runners are locked to the account
+
+At 20:02Z the two CodeQL jobs for `OpenList-Frontend` PR #3 failed after 3 s without a log, annotated `The job was not started because your account is locked due to a billing issue.` A `verify only (no write)` dispatch of `openbox-deploy.yml` at 20:04Z (run `41237151949`) failed the same way in 5 s, so the lock is account- or organization-wide, not repository-specific — the same workflow had succeeded 18 minutes earlier, and both repositories are public, so no code change explains it. Nothing in the repositories needs fixing; a payment method or spending limit does, at `https://github.com/settings/billing` (organization billing for `hillstreet-ph`).
+
+Until that clears, no image can be built, no frontend release published, and no promotion dispatched — including the build that would carry PR #3. Production is unaffected: it is running `main-35a4ce0`.
+
+Once runners are available again, the shortest path to shipping what is pending is: merge `open-box#68` (the credential normalization — its checks can only run on a runner) and `OpenList-Frontend#3`; dispatch `build_rolling.yml` on the frontend repository with `draft=false` to publish the `edge` release that `build.sh` prefers; merge `open-box#67`, whose push produces `main-<sha>` embedding that dist; then promote it with the same gated command, using the new entry-chunk name for `expected_frontend_asset`. A backend merge alone produces a shippable image one commit sooner, so if the frontend release stalls, promoting the `#68` build is still worth doing on its own.
 
 
 ## Remaining rollout gates
 
-- Workflow dispatch is available again. Run `41201462506` dispatched `openbox-deploy.yml` successfully and stopped at the rotation precondition, so the earlier 422 ("Actions disabled for the account") gate no longer applies. The remaining gate is the human rotation attestation, not platform access.
-- Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository.
-- Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (see the third-pass section). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback.
+- Workflow dispatch is blocked again, by billing rather than by permissions: see the runner-lock section. The earlier 422 ("Actions disabled for the account") and the rotation attestation are both resolved — `openbox-deploy.yml` ran write-enabled and passed as run `41235611739` — but no run starts until the account's Actions billing is settled.
+- Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository. The owner attested rotation for the promotion gate; that attestation is not evidence this repository could verify, and the pasted GitHub PAT in particular should be confirmed revoked at `https://github.com/settings/tokens`.
+- Image build, immutable digest verification and the production rollout are done for both `main-a15ceb3` (third pass) and `main-35a4ce0`, the session-durability build (fourth pass). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. The next promotion target is a build that also carries `open-box#68` and `OpenList-Frontend` PR #3, which needs those merges and, for the frontend, a new `open-box` `main` commit.
 - Runtime `x_*` tables are in `public`, not the intended isolated `open_box` schema. Verify an encrypted backup and reversible migration before moving tables or changing search_path.
-- No persistent volume was observed on the service. Do not create a local storage mount on the container filesystem and describe it as durable. The session fix above works without a volume because both the signing key and the revocations live in the database; after promoting, verify through the edge that a session survives a redeploy and that a logged-out session stays logged out.
+- No persistent volume was observed on the service. Do not create a local storage mount on the container filesystem and describe it as durable. The session fix works without a volume because both the signing key and the revocations live in the database. Still to observe in production: a signed-in session surviving a redeploy, and a signed-out session staying rejected — both need one authenticated session, which is why they are recorded as unverified rather than as passing.
 - Supabase OAuth Server/client registration, exact approved MCP client IDs, explicit SSO subject/account linking, and signed-in MCP tools/list + file read remain unverified. See [CHATGPT_MCP.md](CHATGPT_MCP.md).
 - Open-Connect Google registry rows are capability grants, not verified native storage credentials. This Composio workspace exposed one verified Drive account; that does not establish access to every account in Open-Connect.
 - Native GoogleDrive drivers cannot consume opaque connector metadata. An approved scoped filesystem broker or separate per-account native authorization is required. Non-executable Open-Connect adapter draft: `314835cc-b657-4d4c-8de7-e4bdcd58c51b`.
