@@ -46,6 +46,18 @@ func Auth(allowDisabledGuest bool) func(c *gin.Context) {
 			c.Next()
 			return
 		}
+		if common.IsPAT(token) {
+			user, pat, err := common.ResolvePAT(token)
+			if err != nil {
+				common.ErrorStrResp(c, "Invalid or expired access token", 401)
+				c.Abort()
+				return
+			}
+			common.GinAppendValues(c, conf.UserKey, user, conf.TokenScopeKey, pat.ScopeList())
+			log.Debugf("use access token: %s (user %s)", pat.Prefix, user.Username)
+			c.Next()
+			return
+		}
 		userClaims, err := common.ParseToken(token)
 		if err != nil {
 			common.ErrorResp(c, err, 401)
@@ -101,6 +113,18 @@ func Authn(c *gin.Context) {
 		c.Next()
 		return
 	}
+	if common.IsPAT(token) {
+		user, pat, err := common.ResolvePAT(token)
+		if err != nil {
+			common.ErrorStrResp(c, "Invalid or expired access token", 401)
+			c.Abort()
+			return
+		}
+		common.GinAppendValues(c, conf.UserKey, user, conf.TokenScopeKey, pat.ScopeList())
+		log.Debugf("use access token: %s (user %s)", pat.Prefix, user.Username)
+		c.Next()
+		return
+	}
 	userClaims, err := common.ParseToken(token)
 	if err != nil {
 		common.ErrorResp(c, err, 401)
@@ -146,5 +170,31 @@ func AuthAdmin(c *gin.Context) {
 		c.Abort()
 	} else {
 		c.Next()
+	}
+}
+
+// AuthScope enforces that a request authenticated with a personal access
+// token carries the given scope. Session (JWT) authentication is governed
+// by role checks only and passes through.
+func AuthScope(scope string) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		v := c.Request.Context().Value(conf.TokenScopeKey)
+		if v == nil {
+			c.Next()
+			return
+		}
+		scopes, ok := v.([]string)
+		if !ok {
+			c.Next()
+			return
+		}
+		for _, s := range scopes {
+			if s == scope {
+				c.Next()
+				return
+			}
+		}
+		common.ErrorStrResp(c, "Access token is missing required scope: "+scope, 403)
+		c.Abort()
 	}
 }

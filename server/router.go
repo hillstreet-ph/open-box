@@ -4,6 +4,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	multipartPkg "github.com/OpenListTeam/OpenList/v4/internal/multipart"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -79,6 +80,9 @@ func Init(e *gin.Engine) {
 	auth.GET("/me/sshkey/list", handles.ListMyPublicKey)
 	auth.POST("/me/sshkey/add", handles.AddMyPublicKey)
 	auth.POST("/me/sshkey/delete", handles.DeleteMyPublicKey)
+	auth.GET("/me/token/list", handles.ListMyTokens)
+	auth.POST("/me/token/create", handles.CreateMyToken)
+	auth.POST("/me/token/revoke", handles.RevokeMyToken)
 	auth.POST("/auth/2fa/generate", handles.Generate2FA)
 	auth.POST("/auth/2fa/verify", handles.Verify2FA)
 	auth.GET("/auth/logout", handles.LogOut)
@@ -105,8 +109,8 @@ func Init(e *gin.Engine) {
 
 	_fs(auth.Group("/fs"))
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
-	_task(auth.Group("/task", middlewares.AuthNotGuest))
-	_sharing(auth.Group("/share", middlewares.AuthNotGuest))
+	_task(auth.Group("/task", middlewares.AuthNotGuest, middlewares.AuthScope(model.ScopeTaskRead)))
+	_sharing(auth.Group("/share", middlewares.AuthNotGuest, middlewares.AuthScope(model.ScopeShare)))
 	admin(auth.Group("/admin", middlewares.AuthAdmin))
 	if flags.Debug || flags.Dev {
 		debug(g.Group("/debug"))
@@ -199,41 +203,41 @@ func fsAndShare(g *gin.RouterGroup) {
 }
 
 func _fs(g *gin.RouterGroup) {
-	g.Any("/search", middlewares.SearchIndex, handles.Search)
-	g.Any("/other", handles.FsOther)
-	g.Any("/dirs", handles.FsDirs)
-	g.POST("/mkdir", handles.FsMkdir)
-	g.POST("/rename", handles.FsRename)
-	g.POST("/batch_rename", handles.FsBatchRename)
-	g.POST("/regex_rename", handles.FsRegexRename)
-	g.POST("/move", handles.FsMove)
-	g.POST("/recursive_move", handles.FsRecursiveMove)
-	g.POST("/copy", handles.FsCopy)
-	g.POST("/remove", handles.FsRemove)
-	g.POST("/remove_empty_directory", handles.FsRemoveEmptyDirectory)
+	g.Any("/search", middlewares.SearchIndex, middlewares.AuthScope(model.ScopeFSRead), handles.Search)
+	g.Any("/other", middlewares.AuthScope(model.ScopeFSRead), handles.FsOther)
+	g.Any("/dirs", middlewares.AuthScope(model.ScopeFSRead), handles.FsDirs)
+	g.POST("/mkdir", middlewares.AuthScope(model.ScopeFSWrite), handles.FsMkdir)
+	g.POST("/rename", middlewares.AuthScope(model.ScopeFSWrite), handles.FsRename)
+	g.POST("/batch_rename", middlewares.AuthScope(model.ScopeFSWrite), handles.FsBatchRename)
+	g.POST("/regex_rename", middlewares.AuthScope(model.ScopeFSWrite), handles.FsRegexRename)
+	g.POST("/move", middlewares.AuthScope(model.ScopeFSWrite), handles.FsMove)
+	g.POST("/recursive_move", middlewares.AuthScope(model.ScopeFSWrite), handles.FsRecursiveMove)
+	g.POST("/copy", middlewares.AuthScope(model.ScopeFSWrite), handles.FsCopy)
+	g.POST("/remove", middlewares.AuthScope(model.ScopeFSWrite), handles.FsRemove)
+	g.POST("/remove_empty_directory", middlewares.AuthScope(model.ScopeFSWrite), handles.FsRemoveEmptyDirectory)
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
-	g.PUT("/put", middlewares.FsUp, uploadLimiter, handles.FsStream)
-	g.PUT("/form", middlewares.FsUp, uploadLimiter, handles.FsForm)
+	g.PUT("/put", middlewares.FsUp, middlewares.AuthScope(model.ScopeFSWrite), uploadLimiter, handles.FsStream)
+	g.PUT("/form", middlewares.FsUp, middlewares.AuthScope(model.ScopeFSWrite), uploadLimiter, handles.FsForm)
 	multipartPkg.DefaultManager.StartGC() // reclaim ring files orphaned by a previous run
 	multipart := g.Group("/multipart")
-	multipart.POST("/init", middlewares.FsUp, handles.MultipartInit)
-	multipart.PUT("/chunk", uploadLimiter, handles.MultipartChunk)
-	multipart.POST("/complete", handles.MultipartComplete)
-	multipart.GET("/status", handles.MultipartStatus)
-	multipart.POST("/abort", handles.MultipartAbort)
+	multipart.POST("/init", middlewares.FsUp, middlewares.AuthScope(model.ScopeFSWrite), handles.MultipartInit)
+	multipart.PUT("/chunk", middlewares.AuthScope(model.ScopeFSWrite), uploadLimiter, handles.MultipartChunk)
+	multipart.POST("/complete", middlewares.AuthScope(model.ScopeFSWrite), handles.MultipartComplete)
+	multipart.GET("/status", middlewares.AuthScope(model.ScopeFSWrite), handles.MultipartStatus)
+	multipart.POST("/abort", middlewares.AuthScope(model.ScopeFSWrite), handles.MultipartAbort)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
 	// g.POST("/add_aria2", handles.AddOfflineDownload)
 	// g.POST("/add_qbit", handles.AddQbittorrent)
 	// g.POST("/add_transmission", handles.SetTransmission)
-	g.POST("/add_offline_download", handles.AddOfflineDownload)
-	g.POST("/archive/decompress", handles.FsArchiveDecompress)
+	g.POST("/add_offline_download", middlewares.AuthScope(model.ScopeFSWrite), handles.AddOfflineDownload)
+	g.POST("/archive/decompress", middlewares.AuthScope(model.ScopeFSWrite), handles.FsArchiveDecompress)
 	// Torrent 相关接口
-	g.POST("/torrent/parse", handles.ParseTorrent)
-	g.POST("/torrent/upload_parse", handles.UploadTorrentAndParse)
-	g.POST("/torrent/rapid_upload", handles.TorrentRapidUpload)
-	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
+	g.POST("/torrent/parse", middlewares.AuthScope(model.ScopeFSWrite), handles.ParseTorrent)
+	g.POST("/torrent/upload_parse", middlewares.AuthScope(model.ScopeFSWrite), handles.UploadTorrentAndParse)
+	g.POST("/torrent/rapid_upload", middlewares.AuthScope(model.ScopeFSWrite), handles.TorrentRapidUpload)
+	g.POST("/torrent/generate", middlewares.AuthScope(model.ScopeFSWrite), handles.GenerateTorrentForPath)
 	// Direct upload (client-side upload to storage)
-	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
+	g.POST("/get_direct_upload_info", middlewares.FsUp, middlewares.AuthScope(model.ScopeFSWrite), handles.FsGetDirectUploadInfo)
 }
 
 func _task(g *gin.RouterGroup) {
