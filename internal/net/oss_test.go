@@ -31,9 +31,17 @@ func TestNewOSSClientUsesEnvironmentHTTPSProxy(t *testing.T) {
 		t.Fatal("expected OSS client to use a custom HTTP client")
 	}
 
-	transport, ok := client.HTTPClient.Transport.(*http.Transport)
+	// The shared client wraps its transport in the SSRF guard, so the proxy lives one
+	// level inside. Asserting both matters: a client that honours the proxy but lost the
+	// guard would have satisfied the old assertion — and a guard that swallowed the proxy
+	// setting fails the lookup below.
+	guarded, ok := client.HTTPClient.Transport.(*safeTransport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", client.HTTPClient.Transport)
+		t.Fatalf("expected the SSRF-guarded transport, got %T", client.HTTPClient.Transport)
+	}
+	transport, ok := guarded.base.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected the guard to wrap *http.Transport, got %T", guarded.base)
 	}
 
 	if transport.Proxy == nil {
