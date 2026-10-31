@@ -207,6 +207,43 @@ Tests: `internal/model/login_guard_test.go` (decay, lock not extended by retries
 
 What this does **not** fix: the counter is still process-local, so with more than one replica a client can still get a fresh budget on each one — a database-backed guard would be needed for that, and the replica count is still unverified because this repository has no Zeabur access. What an operator locked out of the **current** build should do: stop retrying for five full minutes — retries extend the lock — then sign in with the password the account actually has, not the rotated environment value.
 
+## Sign-in answered `Failed to connect to LDAP … missing address` for a password
+
+Reported 2026-11-01: the administrator could not sign in and the page said
+
+```
+Failed to connect to LDAP: LDAP Result Code 200 "Network Error": dial tcp: missing address
+```
+
+Nobody was trying to log in over LDAP. The flag made them.
+
+`ldap_login_enabled` is a **PUBLIC** setting, so `/api/public/settings` publishes it, and the sign-in page treats it as the instruction for how to sign in at all: `OpenList-Frontend/src/pages/login/index.tsx` sets `useLdap` to true whenever it is true, and the Login button then posts to `/auth/login/ldap` instead of `/auth/login/hash`. The live service answered `ldap_login_enabled = 'true'` (with `ldap_login_tips = 'login with ldap'`), while `ldap_server` — PRIVATE, so not visible from outside — had no host in it. One call to each route, from the same machine, at 21:36Z:
+
+| route | production answer |
+| --- | --- |
+| `POST /api/auth/login/ldap` | `{"code":500,"message":"failed to connect to LDAP: LDAP Result Code 200 \"Network Error\": dial tcp: missing address"}` |
+| `POST /api/auth/login/hash` | `{"code":401,"message":"Invalid username or password"}` |
+
+The password route is healthy and reachable; the page simply was not using it. `dial tcp: missing address` is what `ldap.Dial("tcp", "")` returns — the setting box was empty (or held only a scheme), and `HandleLdapLogin` passed it straight to the socket. This is the third distinct cause in the sign-in flow, alongside the guard that would not let go and the initial-password variable that says nothing when it is ignored.
+
+The fix is one question — *can LDAP sign-in actually be offered?* — asked by every surface that would otherwise hand somebody to a directory:
+
+- `internal/conf/ldap.go` holds the rule as pure functions: `LdapDialTarget` turns the free-text `ldap_server` into a `host:port` (accepting a bare host, `ldap://`/`ldaps://`, and bare or bracketed IPv6, and implying 389/636 from the scheme) or says which setting is wrong and how to fix it; `LdapSignInProblem` adds only what genuinely cannot work — no address, or a search filter with no `%s` for the username. The search base is deliberately **not** required: some directories answer a search from the root, and calling such a deployment unusable would switch off the only sign-in its users have.
+- `internal/setting/ldap.go` exposes that as `LdapSignInProblem()` over the stored settings, so the HTTP route, the protocol servers and the public view cannot drift apart.
+- `PublicSettings` answers `ldap_login_enabled = "false"` while the directory is unusable. The public flag now means "LDAP sign-in is available", not "somebody ticked a box". The stored setting is untouched — under Settings the operator still sees what they set, next to the field that needs filling.
+- `HandleLdapLogin` refuses before touching the network, and WebDAV, FTP and SFTP gate their LDAP fallback on the same answer, so a half-configured directory no longer replaces the local password error (and no longer opens a connection attempt per mistyped password).
+- `LoginLdap` names the missing setting instead of a transport error, keeps 403 for "not enabled", answers 500 for "enabled but unusable", and records no failed attempt — a service's own misconfiguration must not lock a client out, which the guard from the previous section would otherwise have done after five tries.
+
+Tests: `internal/conf/ldap_test.go` (both tables, including every message naming the setting key), `server/common/ldap_test.go` and `server/handles/ldap_login_test.go` (the real routes through Gin, asserting the **envelope** code and `data.ldap_login_enabled`, plus that the stored setting is not rewritten and `model.LoginFailures` stays 0). All three were checked for vacuity by re-implementing the old policy — the original `dial` prefix-trimming, the original `enabled := …` check, the original public-settings body — and re-running: the common test fails on `want it to mention "ldap_server"` and `want no transport error`, the handler test on the same two, and the public-settings test on `public ldap_login_enabled = "true", want "false"` — while printing the exact production message quoted above. After restoring the fix, `go build ./...` and `go vet` on the touched trees are clean and `go test ./server/... ./internal/conf/... ./internal/model/... ./internal/bootstrap/...` passes; the pre-existing `TestRapidUploadShortCircuit` failure and the three `internal/offline_download` vet findings are unchanged and unrelated.
+
+What this does **not** do: it does not change the row in the production database, and production still runs `main-35a4ce0`, which cannot be replaced while the account's Actions runners are locked. So the flag is still `true` there, and until this ships the sign-in page still defaults to LDAP. Two ways in, today: on the sign-in page, **untick** `login with ldap` — the checkbox is rendered because the flag is on, and the password route behind it works — then set a real address under Settings › LDAP or switch the flag off; or, if the UI is not reachable, one statement against the `x_settings` table does the same, and it is reversible:
+
+```sql
+UPDATE public.x_settings SET value = 'false' WHERE key = 'ldap_login_enabled';
+```
+
+The setting cache reloads on the next write through the API, not on a bare SQL update, so after running it restart the service (or save any setting through the admin UI) before checking.
+
 ## Blocked: GitHub Actions runners are locked to the account
 
 At 20:02Z the two CodeQL jobs for `OpenList-Frontend` PR #3 failed after 3 s without a log, annotated `The job was not started because your account is locked due to a billing issue.` A `verify only (no write)` dispatch of `openbox-deploy.yml` at 20:04Z (run `41237151949`) failed the same way in 5 s, so the lock is account- or organization-wide, not repository-specific — the same workflow had succeeded 18 minutes earlier, and both repositories are public, so no code change explains it. Nothing in the repositories needs fixing; a payment method or spending limit does, at `https://github.com/settings/billing` (organization billing for `hillstreet-ph`).
@@ -215,14 +252,14 @@ Until that clears, no image can be built, no frontend release published, and no 
 
 Merging did not need runners, and is done: `open-box#68` (credential normalization) landed as `1819ac78`, `open-box#67` (these notes) as `d2c1cf8b`, and `OpenList-Frontend#3` as `3630a5c6`. Their CI checks never ran, so each was verified locally instead — `go build ./...`, the package suites above, and the frontend suite — and that is recorded as a substitute for CI, not as CI passing.
 
-Once runners are available again, the shortest path is: dispatch `build_rolling.yml` on the frontend repository with `draft=false` to publish the `edge` release that `build.sh` prefers; merge the login-guard PR, whose push produces `main-<sha>` embedding that dist; then promote it with the gated command, using the entry-chunk name served at that moment for `expected_frontend_asset`. A backend merge alone produces a shippable image one commit sooner, so if the frontend release stalls, promoting the backend build is still worth doing on its own.
+Once runners are available again, the shortest path is: dispatch `build_rolling.yml` on the frontend repository with `draft=false` to publish the `edge` release that `build.sh` prefers; merge the LDAP-availability PR, whose push produces `main-<sha>` embedding that dist; then promote it with the gated command, using the entry-chunk name served at that moment for `expected_frontend_asset`. A backend merge alone produces a shippable image one commit sooner, so if the frontend release stalls, promoting the backend build is still worth doing on its own — and it is the login-flow fixes that are waiting on the image, not the frontend.
 
 
 ## Remaining rollout gates
 
 - Workflow dispatch is blocked again, by billing rather than by permissions: see the runner-lock section. The earlier 422 ("Actions disabled for the account") and the rotation attestation are both resolved — `openbox-deploy.yml` ran write-enabled and passed as run `41235611739` — but no run starts until the account's Actions billing is settled.
 - Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository. The owner attested rotation for the promotion gate; that attestation is not evidence this repository could verify, and the pasted GitHub PAT in particular should be confirmed revoked at `https://github.com/settings/tokens`.
-- Image build, immutable digest verification and the production rollout are done for both `main-a15ceb3` (third pass) and `main-35a4ce0`, the session-durability build (fourth pass). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. `main` now also carries the credential normalization and the sign-in guard fix, so the next promotion target is the first image CI can build from that state, together with a frontend `edge` release that has not been published yet.
+- Image build, immutable digest verification and the production rollout are done for both `main-a15ceb3` (third pass) and `main-35a4ce0`, the session-durability build (fourth pass). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. `main` now also carries the credential normalization, the sign-in guard fix and the LDAP-availability rule, so the next promotion target is the first image CI can build from that state, together with a frontend `edge` release that has not been published yet. The LDAP row is a stored setting, so the `ldap_login_enabled = 'true'` in the production database is not changed by any of this until the image ships — see the sign-in section above for how to sign in meanwhile.
 - Runtime `x_*` tables are in `public`, not the intended isolated `open_box` schema. Verify an encrypted backup and reversible migration before moving tables or changing search_path.
 - No persistent volume was observed on the service. Do not create a local storage mount on the container filesystem and describe it as durable. The session fix works without a volume because both the signing key and the revocations live in the database. Still to observe in production: a signed-in session surviving a redeploy, and a signed-out session staying rejected — both need one authenticated session, which is why they are recorded as unverified rather than as passing.
 - Supabase OAuth Server/client registration, exact approved MCP client IDs, explicit SSO subject/account linking, and signed-in MCP tools/list + file read remain unverified. See [CHATGPT_MCP.md](CHATGPT_MCP.md).
