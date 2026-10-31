@@ -244,13 +244,17 @@ UPDATE public.x_settings SET value = 'false' WHERE key = 'ldap_login_enabled';
 
 The setting cache reloads on the next write through the API, not on a bare SQL update, so after running it restart the service (or save any setting through the admin UI) before checking.
 
+The forcing is visible in the bundle that is being served right now: `assets/login-DitYO93_.js` contains `$ = m("ldap_login_enabled"), ve = v("ldap_login_tips"); … $ && U(!0)` — `setUseLdap(true)` while the flag is true — and behind it a `Show when={…}` block renders `Checkbox … onChange: () => U(!H())` with `children: ve`, which is the untick. So the escape hatch is in the page itself. That is read from the served asset, not from a browser session: this repository has no browser access here, so the click-through is not observed.
+
 ## Blocked: GitHub Actions runners are locked to the account
 
 At 20:02Z the two CodeQL jobs for `OpenList-Frontend` PR #3 failed after 3 s without a log, annotated `The job was not started because your account is locked due to a billing issue.` A `verify only (no write)` dispatch of `openbox-deploy.yml` at 20:04Z (run `41237151949`) failed the same way in 5 s, so the lock is account- or organization-wide, not repository-specific — the same workflow had succeeded 18 minutes earlier, and both repositories are public, so no code change explains it. Nothing in the repositories needs fixing; a payment method or spending limit does, at `https://github.com/settings/billing` (organization billing for `hillstreet-ph`).
 
 Until that clears, no image can be built, no frontend release published, and no promotion dispatched. Production is unaffected: it is running `main-35a4ce0`.
 
-Merging did not need runners, and is done: `open-box#68` (credential normalization) landed as `1819ac78`, `open-box#67` (these notes) as `d2c1cf8b`, and `OpenList-Frontend#3` as `3630a5c6`. Their CI checks never ran, so each was verified locally instead — `go build ./...`, the package suites above, and the frontend suite — and that is recorded as a substitute for CI, not as CI passing.
+Re-checked at 21:43:44Z, after the sign-in fixes merged: the push produced four runs — `Beta Release (Docker)` `41244929222`, `Open-Box Docker Hub` `41244929190`, and CodeQL `41244929050` / `41244929133` — each 3 to 5 seconds long with no steps, the build job annotated the same billing message.
+
+Merging did not need runners, and is done: `open-box#68` (credential normalization) landed as `1819ac78`, `open-box#67` (these notes) as `d2c1cf8b`, and `OpenList-Frontend#3` as `3630a5c6`, followed by `open-box#69` (the sign-in attempt guard) as `f631052a` and `open-box#70` (LDAP sign-in availability) as `6e2b78dd` — so the next promotion target is the image of `main-6e2b78d`. Their CI checks never ran, so each was verified locally instead — `go build ./...`, the package suites above, and the frontend suite — and that is recorded as a substitute for CI, not as CI passing.
 
 Once runners are available again, the shortest path is: dispatch `build_rolling.yml` on the frontend repository with `draft=false` to publish the `edge` release that `build.sh` prefers; merge the LDAP-availability PR, whose push produces `main-<sha>` embedding that dist; then promote it with the gated command, using the entry-chunk name served at that moment for `expected_frontend_asset`. A backend merge alone produces a shippable image one commit sooner, so if the frontend release stalls, promoting the backend build is still worth doing on its own — and it is the login-flow fixes that are waiting on the image, not the frontend.
 
