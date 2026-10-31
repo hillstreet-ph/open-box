@@ -12,6 +12,17 @@ AUTH_REQUIRED = "false"
 [ai]
 binding = "AI"
 
+# Admin-managed AI provider configuration (Workers AI default or an
+# OpenAI-compatible endpoint). The provider API key is stored encrypted with
+# AES-GCM under the AI_CONFIG_KEY Worker secret and is never returned to clients.
+[[kv_namespaces]]
+binding = "AI_CONFIG"
+id = "c400d6e5e1bf44fc96a6ae32f09b5bd1"
+
+# Required Worker secret for provider key encryption (64 base64url characters):
+#   wrangler secret put AI_CONFIG_KEY
+# Provisioned once; rotating it requires saving the provider key again.
+
 # Bind the existing SUPABASE_PUBLISHABLE_KEY for huadtiuuoiriqrjpjxhr in the provider secret store.
 # Verify /auth/me, callback, and refresh with that same project before cutover.
 # Enable only after the GitHub provider can read the authenticated user's email and the full callback test passes.
