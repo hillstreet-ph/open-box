@@ -187,6 +187,7 @@ const (
 	NoTaskKey
 	ApiUrlKey
 	UserKey
+	TokenScopeKey
 	MetaKey
 	MetaPassKey
 	ClientIPKey
