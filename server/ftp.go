@@ -113,11 +113,9 @@ func (d *FtpMainDriver) ClientDisconnected(cc ftpserver.ClientContext) {
 }
 
 func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) (ftpserver.ClientDriver, error) {
-	ip := cc.RemoteAddr().String()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
-		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	ip := model.LoginKeyFromAddr(cc.RemoteAddr().String())
+	if remaining, locked := model.LoginLocked(ip); locked {
+		return nil, errors.New(model.TooManyAttemptsMessage(remaining))
 	}
 	var userObj *model.User
 	var err error
@@ -137,15 +135,15 @@ func (d *FtpMainDriver) AuthUser(cc ftpserver.ClientContext, user, pass string) 
 			userObj, err = tryLdapLoginAndRegister(user, pass)
 		}
 		if err != nil {
-			model.LoginCache.Set(ip, count+1)
+			model.RecordLoginFailure(ip)
 			return nil, err
 		}
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
-		model.LoginCache.Set(ip, count+1)
+		model.RecordLoginFailure(ip)
 		return nil, errors.New("user is not allowed to access via FTP")
 	}
-	model.LoginCache.Del(ip)
+	model.ClearLoginAttempts(ip)
 
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, conf.UserKey, userObj)
