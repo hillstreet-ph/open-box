@@ -113,9 +113,9 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes zeabur@latest auth login --token "$ZEABUR_API_TOKEN" >/dev/null
-          npx --yes zeabur@latest service get --id "$ZEABUR_SERVICE_ID" --json > before-service.json
+          npx --yes zeabur@latest service get --id "$ZEABUR_SERVICE_ID" --interactive=false --json > before-service.json
           jq -r '{uid: .uid, name: .name, projectID: .projectID, updatedAt: .updatedAt}' before-service.json
-          npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json > before-deployment.json || echo '{}' > before-deployment.json
+          npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --json > before-deployment.json || echo '{}' > before-deployment.json
           echo "previous deployment state: $(jq -r '.state // .status // "unknown"' before-deployment.json)"
           echo "$ORIGIN_URL" >/dev/null
           before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" | jq -r '.data.version // empty')
@@ -132,10 +132,10 @@ jobs:
           set -euo pipefail
           if [ "$IMAGE_TAG" = "latest" ] && [ -z "$INPUT_IMAGE_TAG" ]; then
             echo "Re-pulling the tracked tag without changing it (service redeploy)"
-            npx --yes zeabur@latest service redeploy --id "$ZEABUR_SERVICE_ID" --yes
+            npx --yes zeabur@latest service redeploy --id "$ZEABUR_SERVICE_ID" --interactive=false --yes
           else
             echo "Pinning the service image tag to $IMAGE_TAG"
-            npx --yes zeabur@latest service update tag --id "$ZEABUR_SERVICE_ID" --tag "$IMAGE_TAG" --yes
+            npx --yes zeabur@latest service update tag --id "$ZEABUR_SERVICE_ID" --tag "$IMAGE_TAG" --interactive=false --yes
           fi
 
       - name: Wait for the service to report ready
@@ -146,7 +146,7 @@ jobs:
           set -euo pipefail
           deadline=$(( $(date +%s) + 900 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json 2>/dev/null \
+            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --json 2>/dev/null \
               | jq -r '.state // .status // "unknown"' 2>/dev/null || echo unknown)
             serving=$(curl -fsS --max-time 15 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
             echo "$(date -u +%H:%M:%S) deployment state: $state | serving: ${serving:-unreachable}"
