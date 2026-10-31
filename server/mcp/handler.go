@@ -81,7 +81,8 @@ func Register(g *gin.RouterGroup) {
 	var mcpGroup *gin.RouterGroup
 	if strings.TrimSpace(conf.Conf.MCP.OAuthIssuer) == "" {
 		// Preserve the existing admin-only behavior until OAuth is configured.
-		mcpGroup = g.Group("/mcp", middlewares.Auth(false), middlewares.AuthAdmin)
+		// A personal access token must at least carry fs:read to use MCP tools.
+		mcpGroup = g.Group("/mcp", middlewares.Auth(false), middlewares.AuthAdmin, middlewares.AuthScope(model.ScopeFSRead))
 	} else {
 		// OAuth mode authorizes each request as the linked Open-Box user.
 		mcpGroup = g.Group("/mcp", AuthMCP)

@@ -198,3 +198,15 @@ func AuthScope(scope string) func(c *gin.Context) {
 		c.Abort()
 	}
 }
+
+// RequireSession rejects requests authenticated with a personal access
+// token. Account, admin, and token-management surfaces must be used with
+// a login session so a leaked token cannot escalate privileges.
+func RequireSession(c *gin.Context) {
+	if c.Request.Context().Value(conf.TokenScopeKey) != nil {
+		common.ErrorStrResp(c, "this endpoint requires a login session", 403)
+		c.Abort()
+		return
+	}
+	c.Next()
+}

@@ -1,6 +1,8 @@
 package db
 
 import (
+	"time"
+
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/pkg/errors"
 )
@@ -39,6 +41,16 @@ func GetAccessTokensByUserId(userId uint, pageIndex, pageSize int) (tokens []mod
 	return tokens, count, nil
 }
 
-func UpdateAccessToken(t *model.AccessToken) error {
-	return errors.WithStack(db.Save(t).Error)
+// UpdateAccessTokenLastUsed touches only the last-used column so a
+// concurrent revocation (or expiry edit) is never clobbered by a full save.
+func UpdateAccessTokenLastUsed(id uint, ts time.Time) error {
+	return errors.WithStack(db.Model(&model.AccessToken{}).Where("id = ?", id).
+		Update("last_used_time", ts).Error)
+}
+
+// UpdateAccessTokenRevoked soft-revokes a token without rewriting other
+// columns.
+func UpdateAccessTokenRevoked(id uint, ts time.Time) error {
+	return errors.WithStack(db.Model(&model.AccessToken{}).Where("id = ?", id).
+		Update("revoked_at", ts).Error)
 }

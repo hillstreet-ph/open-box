@@ -51,12 +51,12 @@ func TouchAccessTokenLastUsed(t *model.AccessToken, throttle time.Duration) erro
 		return nil
 	}
 	t.LastUsedTime = time.Now()
-	return db.UpdateAccessToken(t)
+	return db.UpdateAccessTokenLastUsed(t.ID, t.LastUsedTime)
 }
 
 // RevokeAccessToken marks a token as revoked. The record is kept for audit.
 func RevokeAccessToken(t *model.AccessToken) error {
 	now := time.Now()
 	t.RevokedAt = &now
-	return db.UpdateAccessToken(t)
+	return db.UpdateAccessTokenRevoked(t.ID, now)
 }

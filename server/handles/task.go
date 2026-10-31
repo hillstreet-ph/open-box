@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
 	"github.com/OpenListTeam/tache"
 	"github.com/gin-gonic/gin"
 )
@@ -125,7 +126,7 @@ func getBatchHandler[T task.TaskExtensionInfo](manager task.Manager[T], callback
 }
 
 func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manager[T]) {
-	g.GET("/undone", func(c *gin.Context) {
+	g.GET("/undone", middlewares.AuthScope(model.ScopeTaskRead), func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
 			// if there is no bug, here is unreachable
@@ -139,7 +140,7 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 					tache.StateErrored, tache.StateFailing, tache.StateWaitingRetry, tache.StateBeforeRetry)
 		})))
 	})
-	g.GET("/done", func(c *gin.Context) {
+	g.GET("/done", middlewares.AuthScope(model.ScopeTaskRead), func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
 			// if there is no bug, here is unreachable
@@ -151,31 +152,31 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 				argsContains(task.GetState(), tache.StateCanceled, tache.StateFailed, tache.StateSucceeded)
 		})))
 	})
-	g.POST("/info", getTargetedHandler(manager, func(c *gin.Context, task T) {
+	g.POST("/info", middlewares.AuthScope(model.ScopeTaskRead), getTargetedHandler(manager, func(c *gin.Context, task T) {
 		common.SuccessResp(c, getTaskInfo(task))
 	}))
-	g.POST("/cancel", getTargetedHandler(manager, func(c *gin.Context, task T) {
+	g.POST("/cancel", middlewares.AuthScope(model.ScopeTaskWrite), getTargetedHandler(manager, func(c *gin.Context, task T) {
 		manager.Cancel(task.GetID())
 		common.SuccessResp(c)
 	}))
-	g.POST("/delete", getTargetedHandler(manager, func(c *gin.Context, task T) {
+	g.POST("/delete", middlewares.AuthScope(model.ScopeTaskWrite), getTargetedHandler(manager, func(c *gin.Context, task T) {
 		manager.Remove(task.GetID())
 		common.SuccessResp(c)
 	}))
-	g.POST("/retry", getTargetedHandler(manager, func(c *gin.Context, task T) {
+	g.POST("/retry", middlewares.AuthScope(model.ScopeTaskWrite), getTargetedHandler(manager, func(c *gin.Context, task T) {
 		manager.Retry(task.GetID())
 		common.SuccessResp(c)
 	}))
-	g.POST("/cancel_some", getBatchHandler(manager, func(task T) {
+	g.POST("/cancel_some", middlewares.AuthScope(model.ScopeTaskWrite), getBatchHandler(manager, func(task T) {
 		manager.Cancel(task.GetID())
 	}))
-	g.POST("/delete_some", getBatchHandler(manager, func(task T) {
+	g.POST("/delete_some", middlewares.AuthScope(model.ScopeTaskWrite), getBatchHandler(manager, func(task T) {
 		manager.Remove(task.GetID())
 	}))
-	g.POST("/retry_some", getBatchHandler(manager, func(task T) {
+	g.POST("/retry_some", middlewares.AuthScope(model.ScopeTaskWrite), getBatchHandler(manager, func(task T) {
 		manager.Retry(task.GetID())
 	}))
-	g.POST("/clear_done", func(c *gin.Context) {
+	g.POST("/clear_done", middlewares.AuthScope(model.ScopeTaskWrite), func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
 			// if there is no bug, here is unreachable
@@ -188,7 +189,7 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 		})
 		common.SuccessResp(c)
 	})
-	g.POST("/clear_succeeded", func(c *gin.Context) {
+	g.POST("/clear_succeeded", middlewares.AuthScope(model.ScopeTaskWrite), func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
 			// if there is no bug, here is unreachable
@@ -200,7 +201,7 @@ func taskRoute[T task.TaskExtensionInfo](g *gin.RouterGroup, manager task.Manage
 		})
 		common.SuccessResp(c)
 	})
-	g.POST("/retry_failed", func(c *gin.Context) {
+	g.POST("/retry_failed", middlewares.AuthScope(model.ScopeTaskWrite), func(c *gin.Context) {
 		isAdmin, uid, ok := getUserInfo(c)
 		if !ok {
 			// if there is no bug, here is unreachable

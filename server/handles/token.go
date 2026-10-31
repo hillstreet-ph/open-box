@@ -18,25 +18,10 @@ type TokenCreateReq struct {
 	ExpiresIn int      `json:"expires_in"` // hours; 0 or negative means no expiry
 }
 
-// requireSession rejects PAT-authenticated requests: token management must
-// happen with a login session so a leaked low-scope token cannot mint
-// higher-scope tokens.
-func requireSession(c *gin.Context) bool {
-	if c.Request.Context().Value(conf.TokenScopeKey) != nil {
-		common.ErrorStrResp(c, "manage tokens with your login session", 403)
-		c.Abort()
-		return false
-	}
-	return true
-}
-
 func CreateMyToken(c *gin.Context) {
 	userObj, ok := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if !ok || userObj.IsGuest() {
 		common.ErrorStrResp(c, "user invalid", 401)
-		return
-	}
-	if !requireSession(c) {
 		return
 	}
 	var req TokenCreateReq
@@ -94,9 +79,6 @@ func ListMyTokens(c *gin.Context) {
 		common.ErrorStrResp(c, "user invalid", 401)
 		return
 	}
-	if !requireSession(c) {
-		return
-	}
 	var req model.PageReq
 	if err := c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
@@ -118,9 +100,6 @@ func RevokeMyToken(c *gin.Context) {
 	userObj, ok := c.Request.Context().Value(conf.UserKey).(*model.User)
 	if !ok || userObj.IsGuest() {
 		common.ErrorStrResp(c, "user invalid", 401)
-		return
-	}
-	if !requireSession(c) {
 		return
 	}
 	tokenId, err := strconv.Atoi(c.Query("id"))
