@@ -84,6 +84,13 @@ Validated against a locally built binary with sqlite, an ephemeral config file a
 
 `server/common/auth_test.go` covers each of these, and `Test Build` now runs `./server/common` and `./internal/op` so the session layer is gated, not just `./server/handles` and `./server/mcp`.
 
+The review round on PR #66 hardened four details of that first cut, all of them in `server/common/auth.go` unless noted:
+
+- the expiry recorded with a revocation is read from the **verified** token, with the configured session lifetime as the fallback. The first version used `ParseUnverified`, which CodeQL flagged correctly: an unverified claim is attacker-chosen, so a token holder could pick how long its row survives. A non-positive `TokenExpiresIn` no longer wins either, which would have dated a revocation into the past and let the hourly prune drop it while the token was still live.
+- the revocation is persisted before it is applied in the process. The first version did the opposite, so a failed insert left a session signed out locally and fully valid again after the next restart.
+- the signing key is behind `SigningKey()`/`SetSigningKey()` guarded by an `RWMutex` instead of the exported `SecretKey` global, because the settings-change callback replaces it while requests are in flight. `TestSigningKeyRotationIsVisibleToConcurrentRequests` runs clean under `go test -race ./server/common`.
+- one normalization point, `sessionCredential`, is used both to hash the credential and to read its expiry. `LogOut` is handed the raw `Authorization` header, so hashing exactly what arrived would store a revocation under a value no request path looks up when a client sends the `"Bearer "` form at sign-out. `TestLogoutAcceptsTheAuthorizationHeaderForm` pins that invariant. `internal/model/revoked_session.go` also declares `size:64` on the hash column so an index-backed varchar has a bounded width on MySQL deployments.
+
 One consequence for the rollout: the first boot of this build seeds `jwt_secret` from whatever the running container's config file holds, so the sessions issued by earlier builds still stop working once. Sign in again after the promotion and every later restart keeps that session.
 
 
