@@ -17,6 +17,14 @@ name: Open-Box Deploy (Zeabur)
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "promote and verify writes the new tag; verify only runs the live gate without any write"
+        required: true
+        type: choice
+        options:
+          - "promote and verify"
+          - "verify only (no write)"
+        default: "promote and verify"
       image_tag:
         description: "Docker Hub tag of hillstreet/open-box to promote (blank keeps the current tag)"
         required: false
@@ -58,8 +66,13 @@ jobs:
       - name: Confirm the rotation precondition
         env:
           ROTATE_CONFIRMED: ${{ inputs.rotate_confirmed }}
+          MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
+          if [ "$MODE" = "verify only (no write)" ]; then
+            echo "Verify-only run: no Zeabur write will be attempted, so no rotation attestation is required."
+            exit 0
+          fi
           if [ "$ROTATE_CONFIRMED" != "yes — allow write" ]; then
             echo "::error::Deployment is gated on rotating the previously exposed management tokens (docs/PLATFORM_BACKEND.md). Re-run with rotate_confirmed = 'yes — allow write' after rotation."
             exit 1
@@ -141,6 +154,7 @@ jobs:
         id: before
 
       - name: Trigger the promotion
+        if: inputs.mode != 'verify only (no write)'
         env:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
@@ -156,6 +170,7 @@ jobs:
           fi
 
       - name: Wait for the service to report ready
+        if: inputs.mode != 'verify only (no write)'
         env:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
@@ -192,6 +207,7 @@ jobs:
           EXPECTED_TAG: ${{ steps.image.outputs.tag }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
           EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
+          VERIFY_ONLY: ${{ inputs.mode == 'verify only (no write)' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           fail() { echo "::error::production gate failed: $1"; exit 1; }
@@ -226,7 +242,12 @@ jobs:
           echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null || fail "public settings payload is empty"
           version=$(echo "$settings" | jq -r '.data.version // empty')
           echo "serving version: $version"
-          [ "$version" != "$BEFORE_VERSION" ] || fail "the reported build stamp did not change; the promotion did not roll the container"
+          if [ "$VERIFY_ONLY" = "true" ]; then
+            [ -n "$version" ] || fail "the origin reports no build stamp"
+            echo "verify-only run: the build stamp is recorded, not compared ($version)"
+          else
+            [ "$version" != "$BEFORE_VERSION" ] || fail "the reported build stamp did not change; the promotion did not roll the container"
+          fi
 
           # Anonymous listing proves the storage driver and mount table read back.
           ls_json=$(curl -sS --max-time 20 -X POST "$SITE_URL/api/fs/list" -H 'Content-Type: application/json' -d '{"path":"/"}' || true)
@@ -242,11 +263,14 @@ jobs:
           curl -sSI --max-time 20 "$SITE_URL/ping" | grep -qi "x-zeabur" || echo "::warning::no x-zeabur header observed at the edge; confirm the Worker still fronts the origin"
 
           if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
-            served=$(curl -sS --max-time 20 "$SITE_URL/" | grep -oE "/assets/index-[A-Za-z0-9_-]+\\.js" | head -n 1 || true)
-            echo "served entry asset: ${served:-none}"
-            case "$served" in
-              *"$EXPECTED_FRONTEND_ASSET"*) echo "frontend identity matches the expected build" ;;
-              *) fail "served frontend asset is not $EXPECTED_FRONTEND_ASSET" ;;
+            # index.html references the legacy and the modern entry chunk, in that
+            # order, so the expected build must be found among all served assets.
+            served=$(curl -sS --max-time 20 "$SITE_URL/" \
+              | grep -oE "/assets/index[A-Za-z0-9._-]*\\.js" | sort -u | paste -sd' ' - || true)
+            echo "served entry assets: ${served:-none}"
+            case " $served " in
+              *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*) echo "frontend identity matches the expected build" ;;
+              *) fail "served frontend assets do not include $EXPECTED_FRONTEND_ASSET" ;;
             esac
           fi
 
@@ -262,6 +286,7 @@ jobs:
             | jq -r '.data.version // "unreachable"' 2>/dev/null || echo unreachable)
           {
             echo "### Open-Box promotion report"
+            echo "- mode: \`${{ inputs.mode }}\`"
             echo "- tag: \`${{ steps.image.outputs.tag }}\`"
             echo "- digest: \`${{ steps.image.outputs.digest }}\`"
             echo "- build before: \`${{ steps.before.outputs.before_version }}\`"
