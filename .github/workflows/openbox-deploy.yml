@@ -239,12 +239,16 @@ jobs:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
         run: |
           set -uo pipefail
-          echo "### Open-Box promotion report" >> "$GITHUB_STEP_SUMMARY"
-          echo "- tag: \`${{ steps.image.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- digest: \`${{ steps.image.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- build before: \`${{ steps.before.outputs.before_version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- build after: \`$(curl -sS --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // "unreachable"')\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- service: \`${{ vars.ZEABUR_PROJECT_ID }}` / \`${ZEABUR_SERVICE_ID}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ job.status }}" != "success" ]; then
-            echo "- rollback: \`zeabur service update tag --id $ZEABUR_SERVICE_ID --tag <previous tag> --yes\` (volume \`open-box-data\` must be kept)" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          after=$(curl -sS --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null \
+            | jq -r '.data.version // "unreachable"' 2>/dev/null || echo unreachable)
+          {
+            echo "### Open-Box promotion report"
+            echo "- tag: \`${{ steps.image.outputs.tag }}\`"
+            echo "- digest: \`${{ steps.image.outputs.digest }}\`"
+            echo "- build before: \`${{ steps.before.outputs.before_version }}\`"
+            echo "- build after: \`${after}\`"
+            echo "- service: \`${{ vars.ZEABUR_PROJECT_ID }}\` / \`${ZEABUR_SERVICE_ID}\`"
+            if [ "${{ job.status }}" != "success" ]; then
+              echo "- rollback: \`zeabur service update tag --id $ZEABUR_SERVICE_ID --tag <previous tag> --yes\` (volume \`open-box-data\` must be kept)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
