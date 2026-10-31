@@ -136,19 +136,31 @@ jobs:
       - name: Wait for the service to report ready
         env:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
+          BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
         run: |
           set -euo pipefail
           deadline=$(( $(date +%s) + 900 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json 2>/dev/null | jq -r '.state // .status // "unknown"')
-            echo "$(date -u +%H:%M:%S) deployment state: $state"
+            state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --json 2>/dev/null \
+              | jq -r '.state // .status // "unknown"' 2>/dev/null || echo unknown)
+            serving=$(curl -fsS --max-time 15 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
+            echo "$(date -u +%H:%M:%S) deployment state: $state | serving: ${serving:-unreachable}"
             case "$state" in
-              SUCCESS|READY|Succeeded|succeeded) exit 0 ;;
-              FAILURE|FAILED|CRASH|CrashLoopBackOff) echo "::error::deployment reported $state"; exit 1 ;;
+              FAILURE|FAILED|CRASH|CrashLoopBackOff)
+                echo "::error::deployment reported $state; inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
+                exit 1 ;;
+            esac
+            if [ -n "$serving" ] && [ "$serving" != "$BEFORE_VERSION" ]; then
+              echo "The origin now reports a new build; the container rolled."
+              exit 0
+            fi
+            case "$state" in
+              SUCCESS|READY|Succeeded|succeeded) echo "deployment reported $state"; exit 0 ;;
             esac
             sleep 20
           done
-          echo "::error::the service did not report ready within 15 minutes; check zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
+          echo "::error::neither the deployment API nor the reported build stamp confirmed a rollout within 15 minutes."
+          echo "Inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
           exit 1
 
       - name: Production gate — health, PAT routes, database-backed reads, storage, TLS
