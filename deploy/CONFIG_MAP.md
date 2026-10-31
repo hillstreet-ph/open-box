@@ -61,6 +61,13 @@ Never commit secret values. Store secrets only in provider secret managers.
 | Env public | `PORT`, `SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`, `DB_TABLE_PREFIX` |
 | Env secret | `DB_DSN` (scoped to `open_box`), `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
 
+Only `OPENLIST_ADMIN_PASSWORD` reaches the application, and only while the
+administrator row is being created on a fresh database — `ADMIN_PASSWORD` is not
+read by any code path, and a rotated value for an existing administrator is
+reported at boot and ignored unless `OPENLIST_ADMIN_PASSWORD_RESET=1` is also
+set. Change the login password through the account page (or with the reset
+switch during a maintenance boot), not by editing the environment alone.
+
 The retired project `ymhiwerqyegvondndkjn` is not a runtime target. See
 [the production deployment gate](PRODUCTION.md#deployment-gate) for schema,
 matching-key, backup/restore, and rollback requirements before any cutover.
@@ -69,7 +76,7 @@ matching-key, backup/restore, and rollback requirements before any cutover.
 
 | Surface | Store |
 |---------|-------|
-| OpenList admin login | Hashed in `x_users`; bootstrap via Zeabur `ADMIN_PASSWORD` |
+| OpenList admin login | Hashed in `x_users`; bootstrap via Zeabur `OPENLIST_ADMIN_PASSWORD` on first boot only |
 | Supabase Auth (GitHub) | Supabase Auth providers + GitHub OAuth app |
 | Worker session cookies | Cloudflare Worker after `/auth/callback` |
 

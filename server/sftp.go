@@ -93,11 +93,9 @@ func (d *SftpDriver) NoClientAuth(conn ssh.ConnMetadata) (*ssh.Permissions, erro
 }
 
 func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
-	ip := conn.RemoteAddr().String()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
-		return nil, errors.New("Too many unsuccessful sign-in attempts have been made using an incorrect username or password, Try again later.")
+	ip := model.LoginKeyFromAddr(conn.RemoteAddr().String())
+	if remaining, locked := model.LoginLocked(ip); locked {
+		return nil, errors.New(model.TooManyAttemptsMessage(remaining))
 	}
 	pass := string(password)
 	userObj, err := op.GetUserByName(conn.User())
@@ -110,14 +108,14 @@ func (d *SftpDriver) PasswordAuth(conn ssh.ConnMetadata, password []byte) (*ssh.
 		userObj, err = tryLdapLoginAndRegister(conn.User(), pass)
 	}
 	if err != nil {
-		model.LoginCache.Set(ip, count+1)
+		model.RecordLoginFailure(ip)
 		return nil, err
 	}
 	if userObj.Disabled || !userObj.CanFTPAccess() {
-		model.LoginCache.Set(ip, count+1)
+		model.RecordLoginFailure(ip)
 		return nil, errors.New("user is not allowed to access via SFTP")
 	}
-	model.LoginCache.Del(ip)
+	model.ClearLoginAttempts(ip)
 	return nil, nil
 }
 

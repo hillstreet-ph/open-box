@@ -8,6 +8,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
@@ -43,23 +44,24 @@ func LoginHash(c *gin.Context) {
 func loginHash(c *gin.Context, req *LoginReq) {
 	// check count of login
 	ip := c.ClientIP()
-	count, ok := model.LoginCache.Get(ip)
-	if ok && count >= model.DefaultMaxAuthRetries {
-		common.ErrorStrResp(c, model.TooManyAttempts, 429)
-		model.LoginCache.Expire(ip, model.DefaultLockDuration)
+	if remaining, locked := model.LoginLocked(ip); locked {
+		// Which address is being counted is the first thing an operator locked out
+		// of their own service needs, and it is not otherwise visible.
+		utils.Log.Debugf("[login guard] client %s is locked out for another %s", ip, remaining)
+		common.ErrorStrResp(c, model.TooManyAttemptsMessage(remaining), 429)
 		return
 	}
 	// check username
 	user, err := op.GetUserByName(req.Username)
 	if err != nil {
 		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
-		model.LoginCache.Set(ip, count+1)
+		model.RecordLoginFailure(ip)
 		return
 	}
 	// validate password hash
 	if err := user.ValidatePwdStaticHash(req.Password); err != nil {
 		common.ErrorStrResp(c, model.InvalidUsernameOrPassword, 401)
-		model.LoginCache.Set(ip, count+1)
+		model.RecordLoginFailure(ip)
 		return
 	}
 	// check 2FA
@@ -67,7 +69,7 @@ func loginHash(c *gin.Context, req *LoginReq) {
 		if !totp.Validate(req.OtpCode, user.OtpSecret) {
 			// 402 - need opt
 			common.ErrorStrResp(c, model.Invalid2FACode, 402)
-			model.LoginCache.Set(ip, count+1)
+			model.RecordLoginFailure(ip)
 			return
 		}
 	}
@@ -78,7 +80,7 @@ func loginHash(c *gin.Context, req *LoginReq) {
 		return
 	}
 	common.SuccessResp(c, gin.H{"token": token})
-	model.LoginCache.Del(ip)
+	model.ClearLoginAttempts(ip)
 }
 
 type UserResp struct {
