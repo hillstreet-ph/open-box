@@ -17,7 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// SecretKey signs login sessions. UseDurableJwtSecret keeps it in step with
+// signingKey signs login sessions. UseDurableJwtSecret keeps it in step with
 // the value stored in the settings table.
 //
 // A login session is a signed JWT, so verifying it needs no database round
@@ -31,7 +31,30 @@ import (
 // The previous implementation cached the tokens it had issued in memory and
 // treated a cache miss as a revocation, so every container restart answered
 // "token is invalidated" for all logged-in users.
-var SecretKey []byte
+//
+// An administrator rotating the jwt_secret setting replaces the key while
+// requests are in flight, so the value is read through an accessor instead of
+// touched as a plain global.
+var (
+	signingKeyMu sync.RWMutex
+	signingKey   []byte
+)
+
+// SigningKey returns the key that signs and verifies login sessions.
+func SigningKey() []byte {
+	signingKeyMu.RLock()
+	defer signingKeyMu.RUnlock()
+	return signingKey
+}
+
+// SetSigningKey installs the session signing key. The bytes are never mutated
+// in place, only replaced, so a key returned by SigningKey stays usable for as
+// long as its holder needs it.
+func SetSigningKey(key []byte) {
+	signingKeyMu.Lock()
+	defer signingKeyMu.Unlock()
+	signingKey = key
+}
 
 type UserClaims struct {
 	Username string `json:"username"`
@@ -60,6 +83,10 @@ var generatedSecret struct {
 // from OPENLIST_JWT_SECRET or config.json, and later boots keep the stored
 // value even when the configuration file lives on an ephemeral filesystem and
 // was regenerated with a different random secret.
+//
+// This reads the settings cache, so it belongs to startup and key rotation.
+// Request handlers use SigningKey, which the setting-changing callback keeps
+// in step; nothing on the hot path calls JwtSecret.
 func JwtSecret() string {
 	if stored := setting.GetStr(conf.JwtSecretKey); stored != "" {
 		return stored
@@ -78,9 +105,9 @@ func JwtSecret() string {
 // step with the settings table, so an administrator who rotates the key logs
 // every session out immediately instead of at the next restart.
 func UseDurableJwtSecret() {
-	SecretKey = []byte(JwtSecret())
+	SetSigningKey([]byte(JwtSecret()))
 	op.RegisterSettingChangingCallback(func() {
-		SecretKey = []byte(JwtSecret())
+		SetSigningKey([]byte(JwtSecret()))
 	})
 }
 
@@ -171,7 +198,7 @@ func GenerateToken(user *model.User) (tokenString string, err error) {
 			NotBefore: jwt.NewNumericDate(time.Now()),
 		}}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claim)
-	tokenString, err = token.SignedString(SecretKey)
+	tokenString, err = token.SignedString(SigningKey())
 	if err != nil {
 		return "", err
 	}
@@ -191,7 +218,7 @@ func ParseToken(tokenString string) (*UserClaims, error) {
 
 func verifySessionToken(tokenString string) (*UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return SecretKey, nil
+		return SigningKey(), nil
 	})
 	if err != nil {
 		if ve, ok := err.(*jwt.ValidationError); ok {
@@ -213,16 +240,21 @@ func verifySessionToken(tokenString string) (*UserClaims, error) {
 	return nil, errors.New("couldn't handle this token")
 }
 
-// InvalidateToken signs a session out. The revocation is persisted, so a
-// redeploy cannot hand a signed-out token back to its holder.
+// InvalidateToken signs a session out. The revocation is written to the
+// database before it is applied in this process, so a failed durable write
+// cannot leave a token that works again after a restart; the caller sees the
+// error and the session stays usable instead of silently half-revoking.
 func InvalidateToken(tokenString string) error {
 	if tokenString == "" {
 		return nil // don't invalidate empty guest token
 	}
-	expiresAt := sessionExpiry(tokenString)
 	hash := hashSessionToken(tokenString)
+	expiresAt := sessionExpiry(tokenString)
+	if err := op.RevokeSession(hash, expiresAt); err != nil {
+		return err
+	}
 	revokedSessions.add(hash, expiresAt)
-	return op.RevokeSession(hash, expiresAt)
+	return nil
 }
 
 func IsTokenInvalidated(tokenString string) bool {
@@ -232,20 +264,30 @@ func IsTokenInvalidated(tokenString string) bool {
 	return revokedSessions.contains(hashSessionToken(tokenString))
 }
 
+// sessionCredential is the canonical form of a session credential. Handlers
+// hand over the raw Authorization header, and a client may send the bare token
+// on one request and the "Bearer " form on the logout request, so both the
+// revocation and the check normalize before hashing.
+func sessionCredential(tokenString string) string {
+	return strings.TrimPrefix(tokenString, "Bearer ")
+}
+
 // hashSessionToken identifies a session without storing the token itself.
 func hashSessionToken(tokenString string) string {
-	sum := sha256.Sum256([]byte(strings.TrimPrefix(tokenString, "Bearer ")))
+	sum := sha256.Sum256([]byte(sessionCredential(tokenString)))
 	return hex.EncodeToString(sum[:])
 }
 
-// sessionExpiry reads the expiry the token was issued with without trusting
-// its signature; the revocation only needs to live as long as the token does.
+// sessionExpiry returns how long a revocation must be kept for this token: the
+// expiry the token itself was signed with. The signature is verified to read
+// it, because an unverified claim is attacker-chosen and would let a token
+// holder decide how long a row lives; a token that fails verification is
+// already rejected by ParseToken, so the configured lifetime is enough.
 func sessionExpiry(tokenString string) time.Time {
-	claims := &UserClaims{}
-	if _, _, err := jwt.NewParser().ParseUnverified(tokenString, claims); err == nil && claims.ExpiresAt != nil {
+	if claims, err := verifySessionToken(sessionCredential(tokenString)); err == nil && claims.ExpiresAt != nil {
 		return claims.ExpiresAt.Time
 	}
-	if conf.Conf != nil {
+	if conf.Conf != nil && conf.Conf.TokenExpiresIn > 0 {
 		return time.Now().Add(time.Duration(conf.Conf.TokenExpiresIn) * time.Hour)
 	}
 	return time.Now().Add(defaultSessionLifetime)

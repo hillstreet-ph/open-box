@@ -8,7 +8,7 @@ import "time"
 // can then be pruned.
 type RevokedSession struct {
 	ID        uint      `json:"-" gorm:"primaryKey"`
-	TokenHash string    `json:"-" gorm:"uniqueIndex"`
+	TokenHash string    `json:"-" gorm:"uniqueIndex;size:64"`
 	ExpiresAt time.Time `json:"expires_at" gorm:"index"`
 	CreatedAt time.Time `json:"created_at"`
 }

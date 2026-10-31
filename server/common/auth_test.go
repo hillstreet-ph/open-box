@@ -2,6 +2,7 @@ package common
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/glebarez/sqlite"
+	"github.com/golang-jwt/jwt/v4"
 	"gorm.io/gorm"
 )
 
@@ -23,7 +25,7 @@ func init() {
 		panic("failed to connect database")
 	}
 	db.Init(dB)
-	SecretKey = []byte(testSessionSecret)
+	SetSigningKey([]byte(testSessionSecret))
 }
 
 func sessionUser(name string) *model.User {
@@ -35,6 +37,27 @@ func mustToken(t *testing.T, name string) string {
 	raw, err := GenerateToken(sessionUser(name))
 	if err != nil {
 		t.Fatalf("failed to generate session token: %+v", err)
+	}
+	return raw
+}
+
+// mustTokenWithExpiry builds a session token outside the server, the way an
+// attacker holding only the claim layout would: the signature does not match
+// the signing key, so nothing inside it may be trusted.
+func mustTokenWithExpiry(t *testing.T, name string, expiresAt time.Time, secret string) string {
+	t.Helper()
+	claim := UserClaims{
+		Username: name,
+		PwdTS:    time.Now().Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+		},
+	}
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claim).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("failed to build a session token: %+v", err)
 	}
 	return raw
 }
@@ -124,12 +147,93 @@ func TestParseTokenRejectsBadTokens(t *testing.T) {
 	}
 
 	revokedSessions = newRevocationStore()
-	other := []byte(SecretKey)
-	SecretKey = []byte("a-different-secret")
+	other := SigningKey()
+	SetSigningKey([]byte("a-different-secret"))
 	foreign := mustToken(t, "foreign-session")
-	SecretKey = other
+	SetSigningKey(other)
 	if _, err := ParseToken(foreign); err == nil {
 		t.Fatal("token signed with another secret accepted")
+	}
+}
+
+// Logout is handed the Authorization header, which may carry the "Bearer "
+// scheme, while requests are checked with the same header. A revocation
+// recorded under a different form of the credential would silently never be
+// looked up, so both sides normalize to one identity for the session.
+func TestLogoutAcceptsTheAuthorizationHeaderForm(t *testing.T) {
+	revokedSessions = newRevocationStore()
+	raw := mustToken(t, "bearer-logout")
+	if err := InvalidateToken("Bearer " + raw); err != nil {
+		t.Fatalf("logout with a scheme-prefixed header failed: %+v", err)
+	}
+	if !IsTokenInvalidated(raw) {
+		t.Fatal("the session issued without the scheme prefix was not revoked")
+	}
+	if _, err := ParseToken(raw); err == nil {
+		t.Fatal("revoked session still authenticates")
+	}
+}
+
+// A revocation must not outlive what the signature proves. Reading the expiry
+// from an unverified token would let its holder choose how long the row is kept
+// or make a live revocation disappear early, so an unverifiable token falls back
+// to the configured session lifetime.
+func TestRevocationExpiryIgnoresUnsignedClaims(t *testing.T) {
+	revokedSessions = newRevocationStore()
+	forged := mustTokenWithExpiry(t, "forged", time.Now().Add(10*365*24*time.Hour), "not-the-real-secret")
+	if _, err := ParseToken(forged); err == nil {
+		t.Fatal("a token signed with another secret was accepted")
+	}
+	if err := InvalidateToken(forged); err != nil {
+		t.Fatalf("revoking a forged token failed: %+v", err)
+	}
+	items, err := op.ListUnexpiredRevokedSessions(time.Now())
+	if err != nil {
+		t.Fatalf("failed to list revocations: %+v", err)
+	}
+	hash := hashSessionToken(forged)
+	for _, item := range items {
+		if item.TokenHash != hash {
+			continue
+		}
+		if item.ExpiresAt.After(time.Now().Add(90 * 24 * time.Hour)) {
+			t.Fatalf("the forged expiry was trusted: %s", item.ExpiresAt)
+		}
+		return
+	}
+	t.Fatal("the forged token was not revoked")
+}
+
+// Rotating the signing key must be visible to handlers that are reading it
+// concurrently; run with -race to prove the accessors, not a plain global,
+// guard the value.
+func TestSigningKeyRotationIsVisibleToConcurrentRequests(t *testing.T) {
+	revokedSessions = newRevocationStore()
+	original := SigningKey()
+	t.Cleanup(func() { SetSigningKey(original) })
+
+	raw := mustToken(t, "rotating")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			SetSigningKey([]byte(fmt.Sprintf("rotated-%d", i)))
+		}
+		SetSigningKey(original)
+	}()
+	for i := 0; i < 200; i++ {
+		_, _ = ParseToken(raw)
+	}
+	<-done
+	// the rotation loop ends by restoring the original key, so the session
+	// issued before it must verify again
+	if _, err := ParseToken(raw); err != nil {
+		t.Fatalf("the original signing key was not restored: %+v", err)
+	}
+	// and replacing the key signs every earlier session out
+	SetSigningKey([]byte("rotated again"))
+	if _, err := ParseToken(raw); err == nil {
+		t.Fatal("a session signed with the previous key still verifies after rotation")
 	}
 }
 
