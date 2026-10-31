@@ -16,9 +16,18 @@ func LoginLdap(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	enabled := setting.GetBool(conf.LdapLoginEnabled)
-	if !enabled {
-		common.ErrorStrResp(c, "ldap is not enabled", 403)
+	// Enabled is not the same as usable. The sign-in page routes the Login button here
+	// whenever the public flag is on, so an enabled directory with no address is a
+	// reply of "Failed to connect to LDAP: dial tcp: missing address" for everybody —
+	// including the administrator, who meant to type a password. Name the setting that
+	// is missing, before a socket is involved.
+	if err := setting.LdapSignInProblem(); err != nil {
+		if !setting.GetBool(conf.LdapLoginEnabled) {
+			common.ErrorStrResp(c, "ldap is not enabled", 403)
+			return
+		}
+		// Not the visitor's fault, so the attempt guard stays out of it.
+		common.ErrorStrResp(c, err.Error(), 500)
 		return
 	}
 	user, err := op.GetUserByName(req.Username)

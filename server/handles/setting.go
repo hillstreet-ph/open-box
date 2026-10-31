@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -143,5 +144,16 @@ func DeleteSetting(c *gin.Context) {
 }
 
 func PublicSettings(c *gin.Context) {
-	common.SuccessResp(c, op.GetPublicSettingsMap())
+	settings := op.GetPublicSettingsMap()
+	// The sign-in page reads `ldap_login_enabled` to decide how to sign in at all, and
+	// sends the Login button to the LDAP route while it is true. Advertising the flag
+	// when the service cannot actually authenticate anybody — enabled, but with no
+	// directory address — therefore strands every visitor, the administrator included,
+	// on a route that can only fail, with no password prompt left to fall back to.
+	// Publicly the flag means "LDAP sign-in is available"; under Settings the operator
+	// still sees the value they set, with the other LDAP fields.
+	if setting.GetBool(conf.LdapLoginEnabled) && setting.LdapSignInProblem() != nil {
+		settings[conf.LdapLoginEnabled] = "false"
+	}
+	common.SuccessResp(c, settings)
 }

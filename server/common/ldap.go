@@ -3,7 +3,6 @@ package common
 import (
 	"crypto/tls"
 	"fmt"
-	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -19,6 +18,14 @@ import (
 var ErrFailedLdapAuth = errors.New("failed to auth")
 
 func HandleLdapLogin(username, password string) error {
+	// Say what is missing before touching the network. Without this, an enabled but
+	// half-configured directory surfaces as "Failed to connect to LDAP: dial tcp:
+	// missing address" at the moment somebody presses Login — and because the sign-in
+	// page routes through LDAP whenever the public flag is on, that is the
+	// administrator's own login, not just an LDAP user's.
+	if err := setting.LdapSignInProblem(); err != nil {
+		return errors.WithMessage(err, "LDAP sign-in is unavailable")
+	}
 	// Auth start
 	ldapServer := setting.GetStr(conf.LdapServer)
 	skipTlsVerify := setting.GetBool(conf.LdapSkipTlsVerify)
@@ -91,17 +98,12 @@ func LdapRegister(username string) (*model.User, error) {
 }
 
 func dial(ldapServer string, skipTlsVerify ...bool) (*ldap.Conn, error) {
-	tlsEnabled := false
-	if strings.HasPrefix(ldapServer, "ldaps://") {
-		tlsEnabled = true
-		ldapServer = strings.TrimPrefix(ldapServer, "ldaps://")
-	} else if strings.HasPrefix(ldapServer, "ldap://") {
-		ldapServer = strings.TrimPrefix(ldapServer, "ldap://")
+	addr, tlsEnabled, err := conf.LdapDialTarget(ldapServer)
+	if err != nil {
+		return nil, err
 	}
-
 	if tlsEnabled {
-		return ldap.DialTLS("tcp", ldapServer, &tls.Config{InsecureSkipVerify: utils.IsBool(skipTlsVerify...)})
-	} else {
-		return ldap.Dial("tcp", ldapServer)
+		return ldap.DialTLS("tcp", addr, &tls.Config{InsecureSkipVerify: utils.IsBool(skipTlsVerify...)})
 	}
+	return ldap.Dial("tcp", addr)
 }
