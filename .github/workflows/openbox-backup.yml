@@ -9,6 +9,8 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check secrets
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -53,27 +55,13 @@ jobs:
           print("Supabase backup connection reference validated")
           PY
 
-      - name: Install pg_dump
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-
-      - name: Dump
+      # The client version, the schema scope and the proof that the archive is
+      # not empty all live in one script shared with the maintenance job,
+      # because the two copies had drifted and both were producing nothing.
+      - name: Dump and verify
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          set -euo pipefail
-          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          FILE="openbox-db-${STAMP}.sql.gz"
-          pg_dump "$SUPABASE_DB_URL" \
-            --schema=open_box \
-            --no-owner \
-            --no-acl \
-            | gzip -9 > "$FILE"
-          test -s "$FILE"
-          gzip -t "$FILE"
-          CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)
-          echo "FILE=$FILE" >> "$GITHUB_ENV"
-          echo "CHECKSUM=$CHECKSUM" >> "$GITHUB_ENV"
-          ls -lh "$FILE"
+        run: bash .github/scripts/openbox-db-backup.sh
 
       - uses: actions/upload-artifact@v4
         with:
