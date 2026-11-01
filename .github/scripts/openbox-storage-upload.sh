@@ -65,10 +65,13 @@ fi
 
 BASE="https://${REF}.supabase.co/storage/v1"
 AUTH=(-H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}")
-# Response bodies land here rather than in a fixed /tmp name, so a re-run in the
-# same job can never read a stale body and call a failed request a good bucket.
-BODIES=$(mktemp -d)
-trap 'rm -rf "$BODIES"' EXIT
+# Response bodies land in fresh temp files rather than fixed /tmp names, so a
+# re-run in the same job can never read a stale body and call a failed request
+# a good bucket.
+BODY_BUCKET=$(mktemp)
+BODY_UPLOAD=$(mktemp)
+BODY_MANIFEST=$(mktemp)
+trap 'rm -f "$BODY_BUCKET" "$BODY_UPLOAD" "$BODY_MANIFEST"' EXIT
 
 post() { # <url> <output-file> <content-type> <body-source(@file|inline-json)>
   local url="$1" out="$2" type="$3" body="$4"
@@ -82,25 +85,25 @@ post() { # <url> <output-file> <content-type> <body-source(@file|inline-json)>
 }
 
 # --- bucket: create it, or accept that it is already there -------------------
-code=$(post "$BASE/bucket" "$BODIES"/bucket.json application/json \
+code=$(post "$BASE/bucket" "$BODY_BUCKET" application/json \
   "{\"id\":\"${BUCKET}\",\"name\":\"${BUCKET}\",\"public\":false}") \
   || { echo "::error::could not reach ${BASE}/bucket"; exit 1; }
-if grep -q 'BucketAlreadyExists' "$BODIES"/bucket.json 2>/dev/null; then
+if grep -q 'BucketAlreadyExists' "$BODY_BUCKET" 2>/dev/null; then
   echo "bucket already exists (HTTP $code)"
 elif [ "${code#2}" != "$code" ]; then
   echo "bucket ready (HTTP $code)"
 else
-  echo "::error::bucket step returned $code: $(cat "$BODIES"/bucket.json)"
+  echo "::error::bucket step returned $code: $(cat "$BODY_BUCKET")"
   exit 1
 fi
 
 # --- archive ----------------------------------------------------------------
-code=$(post "$BASE/object/${BUCKET}/${FILE}" "$BODIES"/upload.json \
+code=$(post "$BASE/object/${BUCKET}/${FILE}" "$BODY_UPLOAD" \
   application/gzip "@${FILE}") \
   || { echo "::error::could not upload $FILE"; exit 1; }
 case "$code" in
-  2??) echo "archive stored: $(cat "$BODIES"/upload.json)" ;;
-  *) echo "::error::archive upload returned $code: $(cat "$BODIES"/upload.json)"; exit 1 ;;
+  2??) echo "archive stored: $(cat "$BODY_UPLOAD")" ;;
+  *) echo "::error::archive upload returned $code: $(cat "$BODY_UPLOAD")"; exit 1 ;;
 esac
 
 # --- manifest, beside the archive rather than in a table that does not exist --
@@ -113,11 +116,11 @@ jq -n \
   '[{backup_id:$backup_id,kind:$kind,location:$location,checksum:$checksum,created_at:$created_at,verification_status:"verified"}]' \
   > "${FILE}.manifest.json"
 
-code=$(post "$BASE/object/${BUCKET}/${FILE}.manifest.json" "$BODIES"/manifest.json \
+code=$(post "$BASE/object/${BUCKET}/${FILE}.manifest.json" "$BODY_MANIFEST" \
   application/json "@${FILE}.manifest.json") \
   || { echo "::error::could not upload ${FILE}.manifest.json"; exit 1; }
 case "$code" in
   2??) echo "manifest stored alongside the archive" ;;
-  *) echo "::error::manifest upload returned $code: $(cat "$BODIES"/manifest.json)"; exit 1 ;;
+  *) echo "::error::manifest upload returned $code: $(cat "$BODY_MANIFEST")"; exit 1 ;;
 esac
 cat "${FILE}.manifest.json"
