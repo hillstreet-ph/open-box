@@ -22,8 +22,8 @@
 #      does not reliably repoint the command that is first on PATH.
 #   2. "pg_dump --schema=<name>" on a schema that does not exist is not an
 #      error: it writes header comments, exits 0, and uploads a backup of
-#      nothing. The schemas are read from the live catalog, and the dump is
-#      compared against the table count that catalog promised.
+#      nothing. The scope is therefore read from the live catalog, and every
+#      table it names has to appear in the archive.
 #   3. A backup job that cannot reach the server has to say so rather than
 #      upload something smaller than the last good one.
 set -euo pipefail
@@ -177,10 +177,13 @@ dumped_total=$(grep -c . <<<"$dumped")
 # reported, so there is nothing left to hard-gate on a single table name —
 # production's settings live in x_setting_items, not x_settings, and a gate
 # invented from a guess would fail the nightly job on a correct archive.
-# What is still worth reporting is how much of the archive holds rows.
-data_tables=$(gunzip -c "$FILE" | awk '/^(COPY|INSERT INTO) /{print $2}' | sed 's/($//' | sort -u | grep -c . || true)
+# What is still worth reporting is how much of the archive is data. Note that
+# pg_dump emits a COPY section for an empty table too, so this counts sections,
+# not rows — the first real run said 103 of 103, which is a scope fact, not a
+# claim that every one of those tables holds anything.
+copy_sections=$(gunzip -c "$FILE" | awk '/^(COPY|INSERT INTO) /{print $2}' | sed 's/($//' | sort -u | grep -c . || true)
 CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)
-echo "verified: openbox-tables=${#expected[@]} tables-in-archive=$dumped_total data-bearing-tables=${data_tables:-0} sha256=$CHECKSUM"
+echo "verified: openbox-tables=${#expected[@]} tables-in-archive=$dumped_total copy-sections=${copy_sections:-0} sha256=$CHECKSUM"
 ls -lh "$FILE"
 
 if [ -n "${GITHUB_ENV:-}" ]; then

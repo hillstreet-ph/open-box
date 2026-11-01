@@ -66,7 +66,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: openbox-db-backup
-          path: "*.sql.gz"
+          path: |
+            *.sql.gz
+            *.manifest.json
           retention-days: 14
 
       - name: Ensure bucket + upload
@@ -75,21 +77,45 @@ jobs:
           KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          curl -sS -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
+          # A bucket that already exists is success, and 409 is how Storage says
+          # so; swallowing every status code is not.
+          code=$(curl -sS -o /tmp/bucket.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"id":"open-box-backups","name":"open-box-backups","public":false}' || true
-          curl --fail-with-body -sS -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
+            -d '{"id":"open-box-backups","name":"open-box-backups","public":false}')
+          case "$code" in
+            2??) echo "bucket ready (HTTP $code)" ;;
+            409) echo "bucket already exists" ;;
+            *) echo "::error::bucket step returned $code: $(cat /tmp/bucket.json)"; exit 1 ;;
+          esac
+
+          code=$(curl -sS -o /tmp/upload.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/gzip" \
-            --data-binary "@${FILE}"
+            --data-binary "@${FILE}")
+          case "$code" in
+            2??) echo "archive stored: $(cat /tmp/upload.json)" ;;
+            *) echo "::error::archive upload returned $code: $(cat /tmp/upload.json)"; exit 1 ;;
+          esac
+
+          # The manifest goes next to the archive, not into openbox_backup_manifest.
+          # The run that proved this job listed production's Open-Box tables as ten
+          # x_* rows in public with no openbox_* table at all, and no Go code reads
+          # that name — it is a legacy assumption left over from
+          # supabase/migrations, so writing a row there could never have worked.
           jq -n \
             --arg backup_id "$FILE" \
             --arg location "supabase://open-box-backups/$FILE" \
             --arg checksum "sha256:$CHECKSUM" \
-            '[{backup_id:$backup_id,kind:"postgresql",location:$location,checksum:$checksum,verification_status:"verified"}]' \
-            > /tmp/backup-manifest.json
-          curl --fail-with-body -sS -X POST "https://${REF}.supabase.co/rest/v1/openbox_backup_manifest" \
+            --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '[{backup_id:$backup_id,kind:"postgresql",location:$location,checksum:$checksum,created_at:$created_at,verification_status:"verified"}]' \
+            > "${FILE}.manifest.json"
+          code=$(curl -sS -o /tmp/manifest.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}.manifest.json" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
-            -H "Content-Type: application/json" -H "Prefer: return=minimal" \
-            --data-binary @/tmp/backup-manifest.json
+            -H "Content-Type: application/json" \
+            --data-binary "@${FILE}.manifest.json")
+          case "$code" in
+            2??) echo "manifest stored alongside the archive" ;;
+            *) echo "::error::manifest upload returned $code: $(cat /tmp/manifest.json)"; exit 1 ;;
+          esac
+          cat "${FILE}.manifest.json"
