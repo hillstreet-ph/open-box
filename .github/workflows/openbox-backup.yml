@@ -77,17 +77,21 @@ jobs:
           KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          # A bucket that already exists is success, and 409 is how Storage says
-          # so; swallowing every status code is not.
+          # A bucket that already exists is success. Storage says so with HTTP
+          # 400 carrying a 409/"BucketAlreadyExists" body, so the transport code
+          # alone is not the answer — the body has to say which error it was.
           code=$(curl -sS -o /tmp/bucket.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
             -H "Content-Type: application/json" \
             -d '{"id":"open-box-backups","name":"open-box-backups","public":false}')
-          case "$code" in
-            2??) echo "bucket ready (HTTP $code)" ;;
-            409) echo "bucket already exists" ;;
-            *) echo "::error::bucket step returned $code: $(cat /tmp/bucket.json)"; exit 1 ;;
-          esac
+          if grep -q 'BucketAlreadyExists' /tmp/bucket.json 2>/dev/null; then
+            echo "bucket already exists (HTTP $code)"
+          elif [ "${code#2}" != "$code" ]; then
+            echo "bucket ready (HTTP $code)"
+          else
+            echo "::error::bucket step returned $code: $(cat /tmp/bucket.json)"
+            exit 1
+          fi
 
           code=$(curl -sS -o /tmp/upload.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
             -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
