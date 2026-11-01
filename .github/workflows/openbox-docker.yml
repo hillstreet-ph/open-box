@@ -44,10 +44,22 @@ jobs:
           REPO="${USER}/open-box"
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
+            # `latest` is a release pointer, and it moves only here — when a
+            # version tag is pushed. The live Zeabur service resolves a mutable
+            # tag, so every push to main that moved `latest` redeployed
+            # production without the gated workflow running: confirmed three
+            # times, and confirmed again on 2026-11-01 between 13:19Z and
+            # 13:34Z with no `Open-Box Deploy (Zeabur)` run at all in the
+            # window (the promotions on main are 12:24Z and 22:19Z on 10-31).
+            # A docs-only merge was enough to move it.
+            echo "tags=${REPO}:${TAG},${REPO}:latest" >> "$GITHUB_OUTPUT"
+            echo "latest=true" >> "$GITHUB_OUTPUT"
           else
             TAG="main-$(echo ${{ github.sha }} | cut -c1-7)"
+            # The immutable per-commit tag is what a promotion dispatches.
+            echo "tags=${REPO}:${TAG}" >> "$GITHUB_OUTPUT"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "tags=${REPO}:${TAG},${REPO}:latest" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
