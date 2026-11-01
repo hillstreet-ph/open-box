@@ -63,63 +63,24 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: bash .github/scripts/openbox-db-backup.sh
 
+      # The upload is one script now, shared with the maintenance job: the two
+      # copies had drifted, and only the nightly one recorded a manifest, so the
+      # maintenance archives had no checksum to verify a restore against.
+      - name: Ensure bucket + upload archive and manifest
+        env:
+          REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: bash .github/scripts/openbox-storage-upload.sh
+
+      # The script writes the manifest next to the archive, so the artifact is
+      # uploaded after it and carries both files. !cancelled() keeps the archive
+      # in the run even when Storage is unreachable: the twelve-day outage was
+      # only diagnosable because archives were still being produced locally.
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: openbox-db-backup
           path: |
             *.sql.gz
             *.manifest.json
           retention-days: 14
-
-      - name: Ensure bucket + upload
-        env:
-          REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          set -euo pipefail
-          # A bucket that already exists is success. Storage says so with HTTP
-          # 400 carrying a 409/"BucketAlreadyExists" body, so the transport code
-          # alone is not the answer — the body has to say which error it was.
-          code=$(curl -sS -o /tmp/bucket.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/bucket" \
-            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"id":"open-box-backups","name":"open-box-backups","public":false}')
-          if grep -q 'BucketAlreadyExists' /tmp/bucket.json 2>/dev/null; then
-            echo "bucket already exists (HTTP $code)"
-          elif [ "${code#2}" != "$code" ]; then
-            echo "bucket ready (HTTP $code)"
-          else
-            echo "::error::bucket step returned $code: $(cat /tmp/bucket.json)"
-            exit 1
-          fi
-
-          code=$(curl -sS -o /tmp/upload.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}" \
-            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
-            -H "Content-Type: application/gzip" \
-            --data-binary "@${FILE}")
-          case "$code" in
-            2??) echo "archive stored: $(cat /tmp/upload.json)" ;;
-            *) echo "::error::archive upload returned $code: $(cat /tmp/upload.json)"; exit 1 ;;
-          esac
-
-          # The manifest goes next to the archive, not into openbox_backup_manifest.
-          # The run that proved this job listed production's Open-Box tables as ten
-          # x_* rows in public with no openbox_* table at all, and no Go code reads
-          # that name — it is a legacy assumption left over from
-          # supabase/migrations, so writing a row there could never have worked.
-          jq -n \
-            --arg backup_id "$FILE" \
-            --arg location "supabase://open-box-backups/$FILE" \
-            --arg checksum "sha256:$CHECKSUM" \
-            --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '[{backup_id:$backup_id,kind:"postgresql",location:$location,checksum:$checksum,created_at:$created_at,verification_status:"verified"}]' \
-            > "${FILE}.manifest.json"
-          code=$(curl -sS -o /tmp/manifest.json -w "%{http_code}" -X POST "https://${REF}.supabase.co/storage/v1/object/open-box-backups/${FILE}.manifest.json" \
-            -H "Authorization: Bearer ${KEY}" -H "apikey: ${KEY}" \
-            -H "Content-Type: application/json" \
-            --data-binary "@${FILE}.manifest.json")
-          case "$code" in
-            2??) echo "manifest stored alongside the archive" ;;
-            *) echo "::error::manifest upload returned $code: $(cat /tmp/manifest.json)"; exit 1 ;;
-          esac
-          cat "${FILE}.manifest.json"
