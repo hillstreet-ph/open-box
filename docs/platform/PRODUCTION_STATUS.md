@@ -374,19 +374,19 @@ Two consequences worth carrying into the next promotion:
 
 ## The merge channel closed: `latest` moves only on a version tag (2026-11-01)
 
-The sixth pass left one instruction: re-read `Build at:` after the next merge to `main`, before dispatching anything. It was re-read, and production had moved again.
+The sixth pass left one instruction: re-read `Build at:` after the next merge to `main`, before dispatching anything. It was re-read, and production had moved — twice, with no promotion run anywhere in between.
 
-| Time (Z) | Event | Evidence |
-| --- | --- | --- |
-| 12:20:51 | the sixth pass’s image `main-7d238fe` was pushed, digest `sha256:5dfc5fdbe8f49a617…` | Docker Hub tag list |
-| 12:24:50 | the last `Open-Box Deploy (Zeabur)` run before this section (run `41306371948`) | `gh run list --workflow "Open-Box Deploy (Zeabur)"` |
-| ~13:19 | production served `Build at: 2026-11-01 11:52:58` — still the pinned `main-7d238fe` | `/api/public/settings` |
-| 13:19:18 | merge of PR #81 (docs only) pushed `main-1b3a8bf`, digest `sha256:960c6fe784e13c59b…`, and that same run re-pointed `latest` | `openbox-docker.yml` run `41308367763`, Docker Hub tag list |
-| 13:19:20 | the stamp production then served at **both** `open-box.space` and `open-box-space.zeabur.app` | `/api/public/settings` |
-| 13:20–13:36 | no promotion ran in that window; the only deploy run in the log is the 12:24:50 one | same `gh run list` |
-| 13:34:12 | PR #82 merged as `d5ec668` → `main-d5ec668` pushed, digest `sha256:cd8aaa10578669fb9…`, `latest` re-pointed again | run `41309434327`, Docker Hub tag list |
+| Time (Z) | What is verified about it |
+| --- | --- |
+| 12:24:50 | the last `Open-Box Deploy (Zeabur)` run before this section (`41306371948`, the sixth pass). `gh run list --workflow "Open-Box Deploy (Zeabur)"` shows no later run at any point below |
+| 12:20:51 / 13:19:18 / 13:34:12 / 13:47:42 | `Open-Box Docker Hub` pushes for `main-7d238fe`, `main-1b3a8bf` (PR #81, docs only), `main-d5ec668` (PR #82, docs only) and `main-7af6579` (PR #83) respectively; the two pushes after 12:20 each also re-pointed `latest` — digests `5dfc5fdbe8f49a617…`, `960c6fe784e13c59b…`, `cd8aaa10578669fb9…`, `e2bb8b4c3f0419686…` |
+| 13:31 | served: `Build at: 2026-11-01 11:52:58`, `Frontend: v4.2.9` — still the image the promotion pinned |
+| 13:36 | served: `Build at: 2026-11-01 13:19:20`, `Frontend: v4.2.9` — a build this repository never promoted |
+| 14:28 | served: `Build at: 2026-11-01 13:19:10`, `Frontend: v4.2.10` — again different, minutes after the 13:47:42 re-point |
 
-A documentation-only merge reached the live site, twice, without the production gate running. That settles the question the fifth pass got wrong: `service update tag --tag main-<sha>` is not durable on this service — it re-resolves the mutable tag, and CI was moving that tag on every merge.
+Identify an image by its `Build at:` stamp *and* the `Frontend:` version, not by the synthesized `Commit:`. Two `Open-Box Docker Hub` runs overlapped here, and their builds stamped 13:19:10 and 13:19:20 — ten seconds apart, so a stamp alone can be nearly ambiguous; `Frontend: v4.2.10` vs `v4.2.9` separates them, and only the v4.2.10 build is `latest` (= `main-7af6579`, digest `e2bb8b4c…`). One roll was observed skipping an intermediate re-point: `main-1b3a8bf` moved `latest` at 13:19:18 and was never seen served, because the next read (13:36) already showed a build from the later push.
+
+A documentation-only merge (PR #82) reached the live site with the production gate never running, and another (PR #81) re-pointed the tag the service follows ten minutes earlier. The site is now serving `main-7af6579`, the build of PR #83 — so the running production image is whatever merged last, not whatever was promoted. That settles the question the fifth pass got wrong: `service update tag --tag main-<sha>` is not durable on this service — it re-resolves the mutable tag, and CI was moving that tag on every merge.
 
 The fix could not be the Zeabur console from here (no management credential is held by this repository, and none should be), so it is made where CI does have authority: **`Open-Box Docker Hub` no longer publishes `latest` for a push to `main`.** A branch push produces only `hillstreet/open-box:main-<sha>`; `latest` moves when a `v*` tag is pushed, i.e. on a deliberate release. The mutable tag the service follows therefore stops moving on merges, which is the same property the platform-side change would have given, obtained without touching the provider.
 
