@@ -129,13 +129,17 @@ for s in "${schemas[@]}"; do
 done
 
 schema_list=$(printf "'%s'," "${schemas[@]}"); schema_list=${schema_list%,}
-expected_tables=$("${PSQL[@]}" -tAc "
-  SELECT count(*) FROM information_schema.tables
+expected=()
+while IFS= read -r row; do expected+=("$row"); done < <("${PSQL[@]}" -tAc "
+  SELECT table_schema || '.' || table_name FROM information_schema.tables
    WHERE table_schema IN ($schema_list)
      AND table_type = 'BASE TABLE'
-     AND (table_name LIKE 'x\_%' OR table_name LIKE 'openbox\_%')" | tr -d '[:space:]')
-case "$expected_tables" in '' | *[!0-9]*) echo "::error::could not count Open-Box tables"; exit 1 ;; esac
-echo "expected Open-Box tables: $expected_tables"
+     AND (table_name LIKE 'x\_%' OR table_name LIKE 'openbox\_%')
+   ORDER BY 1" | tr -d '\r' | sed '/^[[:space:]]*$/d')
+if [ "${#expected[@]}" -eq 0 ]; then
+  echo "::error::the catalog named no Open-Box tables in ${schemas[*]}"; exit 1
+fi
+echo "Open-Box tables to be present: ${expected[*]}"
 
 FILE="${FILE_PREFIX}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 schema_args=()
@@ -144,20 +148,31 @@ for s in "${schemas[@]}"; do schema_args+=("--schema=$s"); done
 echo "writing $FILE"
 # -b keeps large objects, which is where stored file bodies live on the
 # storage-driver path; ownership and grants are restored by the operator.
+# A schema dump is wider than the Open-Box table list — pg_dump has no way to
+# name "the schema but not its other tables" — so the archive carries whatever
+# else lives in those schemas, and the check below is that every Open-Box table
+# survived, not that nothing else did.
 "$PG_DUMP" "$SUPABASE_DB_URL" "${schema_args[@]}" --no-owner --no-privileges --large-objects \
   | gzip -9 > "$FILE"
 
 test -s "$FILE"
 gzip -t "$FILE"
 
-# The check that would have caught twelve days of empty archives: the dump has
-# to hold every table the catalog said the scoped schemas own.
-dumped_tables=$(gunzip -c "$FILE" | grep -c '^CREATE TABLE' || true)
-dumped_tables=${dumped_tables:-0}
-if [ "$dumped_tables" -ne "$expected_tables" ]; then
-  echo "::error::the dump holds $dumped_tables CREATE TABLE statements, the catalog holds $expected_tables — wrong scope"
+# The check that would have caught twelve days of empty archives: every table
+# the catalog put in scope has to appear in the archive.
+dumped=$(gunzip -c "$FILE" | sed -n 's/^CREATE TABLE \([^ (]*\).*/\1/p' | sort -u)
+missing=""
+for q in "${expected[@]}"; do
+  grep -qxF "$q" <<<"$dumped" && continue
+  # A name that needs quoting is emitted as schema."MixedCase"; accept that form
+  # too rather than reporting a table as missing when the dump has it.
+  grep -qxF "${q%%.*}.\"${q#*.}\"" <<<"$dumped" || missing="$missing $q"
+done
+if [ -n "$missing" ]; then
+  echo "::error::the dump is missing Open-Box tables:$missing (the dump holds $(grep -c . <<<"$dumped") tables)"
   exit 1
 fi
+dumped_total=$(grep -c . <<<"$dumped")
 # A scope-correct archive without the settings table could not restore a usable
 # installation, so name the one row set that must always be present.
 gunzip -c "$FILE" | grep -q 'x_settings' \
@@ -165,7 +180,7 @@ gunzip -c "$FILE" | grep -q 'x_settings' \
 data_stmts=$(gunzip -c "$FILE" | grep -cE '^(COPY |INSERT INTO )' || true)
 
 CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)
-echo "verified: tables=$dumped_tables data-statements=${data_stmts:-0} sha256=$CHECKSUM"
+echo "verified: openbox-tables=${#expected[@]} tables-in-archive=$dumped_total data-statements=${data_stmts:-0} sha256=$CHECKSUM"
 ls -lh "$FILE"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
