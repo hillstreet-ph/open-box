@@ -82,12 +82,21 @@ ten Open-Box tables and a count comparison rejects a correct archive.
 
 | Resource | Purpose |
 |----------|---------|
-| Service `Open-Box` | Prebuilt image runtime |
-| Domain | `open-box-space.zeabur.app` |
+| Service `6a967b310e919aed614685ce` | The runtime that answers the site. Template `PREBUILT_V2`, port `5244` as `web`. |
+| Service `6adf9e880ca070d4379475d0` | Second service in the same project (`open-box-next.zeabur.internal`, port `8080`). Its deployments are Git-driven off `refs/heads/main` of this repository, so it rebuilds on every merge; it owns no public domain. |
+| Domain | `open-box-space.zeabur.app` and `open-box.space`, both bound to `6a967b310e919aed614685ce` (the apex `redirectTo`s the origin host) |
 | Volume `open-box-data` | `/opt/openlist/data` |
 | Health | HTTP `/` on port `web` |
 | Env public | `PORT`, `SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`, `DB_TABLE_PREFIX` |
 | Env secret | `DB_DSN`, `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
+
+"Prebuilt" describes the template, not the deploy trigger. Read twice on 2026-11-01,
+the runtime service was serving images that no promotion dispatched — each
+stamped seconds after a `Open-Box Docker Hub` run re-pointed `latest` — so
+`latest` is both non-monotonic and auto-consumed here. `openbox-deploy.yml`
+re-pinned the service to `main-7d238fe`; whether that pin holds is a fact to
+re-read after the next merge, not to assume. See
+[the production status](../docs/platform/PRODUCTION_STATUS.md#promotion-executed-2026-11-01-sixth-pass--production-runs-the-main-tip).
 
 Only `OPENLIST_ADMIN_PASSWORD` reaches the application, and only while the
 administrator row is being created on a fresh database — `ADMIN_PASSWORD` is not
