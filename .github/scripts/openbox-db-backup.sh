@@ -25,6 +25,7 @@ set -euo pipefail
 
 FILE_PREFIX="${FILE_PREFIX:-openbox-db}"
 ALLOWED_SCHEMAS="${ALLOWED_SCHEMAS:-open_box public}"
+[ -n "${SUPABASE_DB_URL:-}" ] || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
 PSQL=(psql -v ON_ERROR_STOP=1 -X -q "$SUPABASE_DB_URL")
 
 server_major() {
@@ -42,9 +43,13 @@ install_client() {
   sudo apt-get update -qq >/dev/null
   sudo apt-get install -y -qq --no-install-recommends \
     curl ca-certificates gnupg postgresql-common >/dev/null
+  sudo install -d -m 0755 /etc/apt/keyrings
   curl -fsS https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | sudo gpg --dearmor --yes -o /etc/apt/keyrings/postgresql-pgdg.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/postgresql-pgdg.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+  # /etc/os-release rather than lsb_release: the codename is what PGDG names
+  # its suites by, and the runner image always carries the file.
+  . /etc/os-release
+  echo "deb [signed-by=/etc/apt/keyrings/postgresql-pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
     | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
   sudo apt-get update -qq >/dev/null
   # Probe with a recent client, then settle on the exact match for the server.
