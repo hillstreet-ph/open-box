@@ -9,7 +9,7 @@ This repository is assigned to the shared **open-platform** Supabase project.
 | Supabase project | `open-platform` |
 | Supabase project reference | `huadtiuuoiriqrjpjxhr` |
 | Supabase URL | `https://huadtiuuoiriqrjpjxhr.supabase.co` |
-| PostgreSQL schema | `open_box` |
+| PostgreSQL schema | `open_box` (target) — verified 2026-11-01: `open_box` exists and is empty, the live `x_*` tables are in `public` |
 | Sentry organization | `hillstreet` |
 | Sentry project | `open-box` |
 | GitHub repository | `hillstreet-ph/open-box` |

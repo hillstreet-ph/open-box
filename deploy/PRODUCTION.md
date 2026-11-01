@@ -33,6 +33,15 @@ OpenList maps database settings with the `DB_` prefix. Production must use
 `DB_DSN` from the provider secret store so the shared project is scoped to
 `open_box`; component settings alone omit `search_path`.
 
+Scope the DSN at `open_box` is the target, and it is not the state observed on
+2026-11-01: `open_box` exists but holds no tables, while all ten `x_*` tables are
+in `public`. The running service therefore reaches them through `public`, and a
+DSN whose `search_path` is `open_box` alone — without `public` after it — would
+fail to resolve `x_users` on a read. Verify `current_setting('search_path')`
+before changing it, and treat moving the tables into `open_box` as its own
+reviewed migration with a tested restore first (see
+`docs/platform/PRODUCTION_STATUS.md`).
+
 - `PORT=5244`
 - `SITE_URL=https://open-box.space`
 - `PUBLIC_DOMAIN=open-box.space`
@@ -76,9 +85,15 @@ Before starting the new runtime (startup can migrate tables):
 1. Verify the runtime role, `open_box` schema ownership/privileges, and the secret
    `DB_DSN` target using read-only checks. Confirm `current_schema()` is
    `open_box` and `current_setting('search_path')` scopes the connection there.
+   This check does not pass on the current production database: `open_box` is
+   empty and the live tables are in `public`, so a green run here means the
+   migration in step 2 has actually been done, not that it is configured.
 2. Review any required schema/data migration separately. Validate a backup and
    restore into an isolated target, and retain the old image/configuration as a
    rollback target. Do not automatically migrate or write tables into `public`.
+   The ten `x_*` tables are already in `public`, so this rule is a stop on future
+   writes there, not a description of an untouched schema. Verified backup
+   archives now exist, which is what makes a restore test possible at all.
 3. Pair the Worker URL with its existing same-project publishable-key secret
    reference without rotating or exposing the credential.
    Verify `/auth/me`, sign-in callback, and session refresh against that project
