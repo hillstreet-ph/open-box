@@ -173,14 +173,14 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 dumped_total=$(grep -c . <<<"$dumped")
-# A scope-correct archive without the settings table could not restore a usable
-# installation, so name the one row set that must always be present.
-gunzip -c "$FILE" | grep -q 'x_settings' \
-  || { echo "::error::the dump does not mention x_settings; this is not an Open-Box backup"; exit 1; }
-data_stmts=$(gunzip -c "$FILE" | grep -cE '^(COPY |INSERT INTO )' || true)
-
+# The presence loop above already names every Open-Box table the catalog
+# reported, so there is nothing left to hard-gate on a single table name —
+# production's settings live in x_setting_items, not x_settings, and a gate
+# invented from a guess would fail the nightly job on a correct archive.
+# What is still worth reporting is how much of the archive holds rows.
+data_tables=$(gunzip -c "$FILE" | awk '/^(COPY|INSERT INTO) /{print $2}' | sed 's/($//' | sort -u | grep -c . || true)
 CHECKSUM=$(sha256sum "$FILE" | cut -d' ' -f1)
-echo "verified: openbox-tables=${#expected[@]} tables-in-archive=$dumped_total data-statements=${data_stmts:-0} sha256=$CHECKSUM"
+echo "verified: openbox-tables=${#expected[@]} tables-in-archive=$dumped_total data-bearing-tables=${data_tables:-0} sha256=$CHECKSUM"
 ls -lh "$FILE"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
