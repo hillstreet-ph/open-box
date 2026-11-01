@@ -93,9 +93,13 @@ ten Open-Box tables and a count comparison rejects a correct archive.
 "Prebuilt" describes the template, not the deploy trigger. Read twice on 2026-11-01,
 the runtime service was serving images that no promotion dispatched — each
 stamped seconds after a `Open-Box Docker Hub` run re-pointed `latest` — so
-`latest` is both non-monotonic and auto-consumed here. `openbox-deploy.yml`
-re-pinned the service to `main-7d238fe`; whether that pin holds is a fact to
-re-read after the next merge, not to assume. See
+`latest` is both non-monotonic and auto-consumed here. The pin did not hold:
+after PR #81 and #82 merged, the service served those builds with no promotion
+run in the window, which is what a mutable tag re-resolving looks like. CI no
+longer moves `latest` on a push to `main` — `openbox-docker.yml` publishes
+`latest` only on a `v*` tag push — so merges cannot roll this service any more.
+Pointing the service at an immutable tag, or disabling auto-deploy, is still
+the complete fix. See
 [the production status](../docs/platform/PRODUCTION_STATUS.md#promotion-executed-2026-11-01-sixth-pass--production-runs-the-main-tip).
 
 Only `OPENLIST_ADMIN_PASSWORD` reaches the application, and only while the
