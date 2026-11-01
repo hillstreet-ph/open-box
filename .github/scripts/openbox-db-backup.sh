@@ -13,36 +13,48 @@
 # the same way every day for twelve days without either producing a restorable
 # file. Both jobs call this one implementation now.
 #
-# The two failure modes it has to survive:
+# The three failure modes it has to survive:
 #   1. The Ubuntu postgresql-client metapackage is a major version behind
 #      Supabase, and pg_dump refuses a newer server than itself. The client
-#      version is discovered from the server, not pinned here.
+#      version is therefore discovered from the server, not pinned here — and
+#      the binary is chosen by its own --version output, because installing
+#      postgresql-client-17 on a runner that already has a 16 /usr/bin/pg_dump
+#      does not reliably repoint the command that is first on PATH.
 #   2. "pg_dump --schema=<name>" on a schema that does not exist is not an
 #      error: it writes header comments, exits 0, and uploads a backup of
 #      nothing. The schemas are read from the live catalog, and the dump is
 #      compared against the table count that catalog promised.
+#   3. A backup job that cannot reach the server has to say so rather than
+#      upload something smaller than the last good one.
 set -euo pipefail
 
 FILE_PREFIX="${FILE_PREFIX:-openbox-db}"
 ALLOWED_SCHEMAS="${ALLOWED_SCHEMAS:-open_box public}"
 [ -n "${SUPABASE_DB_URL:-}" ] || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
-PSQL=(psql -v ON_ERROR_STOP=1 -X -q "$SUPABASE_DB_URL")
 
-server_major() {
-  local num
-  num=$("${PSQL[@]}" -tAc "SELECT current_setting('server_version_num')::int" | tr -d '[:space:]')
-  case "$num" in '' | *[!0-9]*) echo "::error::unexpected server_version_num: $num" >&2; exit 1 ;; esac
-  echo $((num / 10000))
+major_of() { # <binary> -> its PostgreSQL major, or empty
+  local raw
+  raw=$("$1" --version 2>/dev/null | tr -d '[:space:]')
+  echo "$raw" | sed -E 's/^[^0-9]*([0-9]+).*/\1/'
 }
 
-client_major() { pg_dump --version | sed -E 's/^pg_dump \([^)]*\) ([0-9]+).*/\1/' | tr -d '[:space:]'; }
+newest_bin() { # <name> -> the newest installed copy of that client binary
+  local name=$1 candidate found="" found_v=0 v extra
+  extra=$(command -v "$name" 2>/dev/null || true)
+  for candidate in "/usr/lib/postgresql/"*/bin/"$name" "/usr/bin/$name" "$extra"; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    v=$(major_of "$candidate" || true)
+    case "$v" in '' | *[!0-9]*) continue ;; esac
+    if [ "$v" -gt "$found_v" ]; then found="$candidate"; found_v=$v; fi
+  done
+  [ -n "$found" ] && echo "$found"
+}
 
-install_client() {
-  # PGDG publishes a client per server major; the runner's own repository only
-  # carries the one that shipped with Ubuntu.
+install_client() { # <major> -> add PGDG and install that client major
+  local want=${1:-17}
+  case "$want" in 1[0-9] | 20) ;; *) echo "::error::implausible client major version: $want"; exit 1 ;; esac
   sudo apt-get update -qq >/dev/null
-  sudo apt-get install -y -qq --no-install-recommends \
-    curl ca-certificates gnupg postgresql-common >/dev/null
+  sudo apt-get install -y -qq --no-install-recommends curl ca-certificates gnupg postgresql-common >/dev/null
   sudo install -d -m 0755 /etc/apt/keyrings
   curl -fsS https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | sudo gpg --dearmor --yes -o /etc/apt/keyrings/postgresql-pgdg.gpg
@@ -52,29 +64,40 @@ install_client() {
   echo "deb [signed-by=/etc/apt/keyrings/postgresql-pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
     | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
   sudo apt-get update -qq >/dev/null
-  # Probe with a recent client, then settle on the exact match for the server.
-  sudo apt-get install -y -qq --no-install-recommends postgresql-client-17 >/dev/null
+  sudo apt-get install -y --no-install-recommends "postgresql-client-$want"
 }
 
-ensure_client() {
-  local want have
-  want=$(server_major)
-  if command -v pg_dump >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
-    have=$(client_major)
-    if [ "${have:-0}" -ge "$want" ]; then
-      echo "reusing pg_dump $have for server $want"
-      return
-    fi
-  fi
+BOOT_PSQL=$(newest_bin psql || true)
+if [ -z "$BOOT_PSQL" ]; then
   install_client
-  have=$(client_major)
-  if [ "${have:-0}" -lt "$want" ]; then
-    sudo apt-get install -y -qq --no-install-recommends "postgresql-client-$want" >/dev/null
-    have=$(client_major)
-  fi
-  [ "${have:-0}" -ge "$want" ] || { echo "::error::pg_dump $have cannot dump server $want"; exit 1; }
-  echo "pg_dump $have, server major $want"
+  BOOT_PSQL=$(newest_bin psql || true)
+fi
+[ -n "$BOOT_PSQL" ] || { echo "::error::no psql is available to ask the server its version"; exit 1; }
+
+PSQL=("$BOOT_PSQL" -v ON_ERROR_STOP=1 -X -q "$SUPABASE_DB_URL")
+
+server_major() {
+  local num
+  num=$("${PSQL[@]}" -tAc "SELECT current_setting('server_version_num')::int" | tr -d '[:space:]')
+  case "$num" in '' | *[!0-9]*) echo "::error::unexpected server_version_num: $num" >&2; exit 1 ;; esac
+  echo $((num / 10000))
 }
+
+want=$(server_major)
+PG_DUMP=$(newest_bin pg_dump || true)
+if [ -z "$PG_DUMP" ] || [ "$(major_of "$PG_DUMP")" -lt "$want" ]; then
+  # The runner image ships a client already, but not necessarily the server's
+  # major, and installing one does not repoint the copy that is first on PATH.
+  install_client "$want"
+  PG_DUMP=$(newest_bin pg_dump || true)
+fi
+if [ -z "$PG_DUMP" ] || [ "$(major_of "$PG_DUMP")" -lt "$want" ]; then
+  echo "::error::no pg_dump at or above server major $want; candidates found:"
+  ls -l /usr/lib/postgresql/*/bin/pg_dump 2>&1 || true
+  echo "update-alternatives: $(update-alternatives --query pg_dump 2>&1 | tr '\n' ' ' || true)"
+  exit 1
+fi
+echo "using $PG_DUMP ($(major_of "$PG_DUMP")) against server major $want"
 
 discover_schemas() {
   # The application tables, wherever they actually live: the engine's
@@ -87,8 +110,6 @@ discover_schemas() {
        AND (table_name LIKE 'x\_%' OR table_name LIKE 'openbox\_%')
      ORDER BY table_schema" | tr -d '\r' | sed '/^[[:space:]]*$/d'
 }
-
-ensure_client
 
 schemas=()
 while IFS= read -r row; do schemas+=("$row"); done < <(discover_schemas)
@@ -123,7 +144,7 @@ for s in "${schemas[@]}"; do schema_args+=("--schema=$s"); done
 echo "writing $FILE"
 # -b keeps large objects, which is where stored file bodies live on the
 # storage-driver path; ownership and grants are restored by the operator.
-pg_dump "$SUPABASE_DB_URL" "${schema_args[@]}" --no-owner --no-privileges --large-objects \
+"$PG_DUMP" "$SUPABASE_DB_URL" "${schema_args[@]}" --no-owner --no-privileges --large-objects \
   | gzip -9 > "$FILE"
 
 test -s "$FILE"
