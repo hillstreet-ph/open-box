@@ -43,12 +43,40 @@ Never commit secret values. Store secrets only in provider secret managers.
 
 | Resource | Purpose |
 |----------|---------|
-| Postgres | Schema `open_box`: OpenList `x_*` + `openbox_*` |
-| Session pooler | Provider-verified host/role; secret `DB_DSN` with `sslmode=require` and `search_path=open_box` |
+| Postgres | Open-Box tables are `x_*` only, and they are in `public` today. The `open_box` schema exists and holds no tables; no `openbox_*` table exists anywhere in the project. |
+| Session pooler | Provider-verified host/role; secret `DB_DSN` with `sslmode=require`. `search_path=open_box` is the target, not the current state — with `open_box` empty, the runtime resolves its tables through `public`. |
 | Auth + GitHub provider | Worker OAuth |
-| Storage buckets | `open-box-files`, `open-box-backups` |
+| Storage buckets | `open-box-files` (no objects), `open-box-backups` (holds the database archives; both created 2026-09-22) |
 | Edge Function | `open-box-status` (JWT required) |
 | Vault secrets | `openbox_admin_password_meta`, `openbox_db_connection_meta`, plus shared keys |
+
+### Database ground truth, verified 2026-11-01
+
+Read-only checks against `huadtiuuoiriqrjpjxhr`, cross-checked by what
+`Open-Box Maintenance`'s `backup-db` job listed from `information_schema`:
+
+- `public` holds exactly ten base tables belonging to Open-Box —
+  `x_access_tokens`, `x_meta`, `x_revoked_sessions`, `x_search_nodes`,
+  `x_setting_items`, `x_sharing_dbs`, `x_ssh_public_keys`, `x_storages`,
+  `x_task_items`, `x_users` — alongside roughly ninety others from the shared
+  project (103 `CREATE TABLE` statements in a `--schema=public` dump).
+- `open_box` exists and contains no tables.
+- No `openbox_*` table exists in any schema, and no Go code names one
+  (`grep -rn openbox_ --include='*.go'` returns nothing). The name survives only
+  in `supabase/migrations/20260831232500_*` and `20260901125810_*`, which grant
+  privileges on a table the application never reads. Do not treat those files as
+  a live surface.
+- None of the repository's ten `supabase/migrations/*` versions appear in
+  `supabase_migrations.schema_migrations`, even though that table holds 104 other
+  rows. The platform schema in this repository has not been applied to
+  production, and applying it is a separate reviewed change — it is DDL against a
+  shared database, so it is not something a CI job should do as a side effect.
+- Settings are rows of `x_setting_items`, not an `x_settings` table. A check that
+  greps a dump for `x_settings` fails on a correct backup.
+
+Consequence for the backup job: its scope is discovered from the catalog and
+verified per qualified table name, because a schema dump cannot be limited to the
+ten Open-Box tables and a count comparison rejects a correct archive.
 
 ## Zeabur project `open-box`
 
@@ -59,7 +87,7 @@ Never commit secret values. Store secrets only in provider secret managers.
 | Volume `open-box-data` | `/opt/openlist/data` |
 | Health | HTTP `/` on port `web` |
 | Env public | `PORT`, `SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`, `DB_TABLE_PREFIX` |
-| Env secret | `DB_DSN` (scoped to `open_box`), `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
+| Env secret | `DB_DSN`, `ADMIN_PASSWORD`, `OPENLIST_ADMIN_PASSWORD` |
 
 Only `OPENLIST_ADMIN_PASSWORD` reaches the application, and only while the
 administrator row is being created on a fresh database — `ADMIN_PASSWORD` is not

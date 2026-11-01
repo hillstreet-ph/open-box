@@ -100,8 +100,11 @@ fi
 echo "using $PG_DUMP ($(major_of "$PG_DUMP")) against server major $want"
 
 discover_schemas() {
-  # The application tables, wherever they actually live: the engine's
-  # DB_TABLE_PREFIX rows plus the platform's openbox_* tables.
+  # The application tables, wherever they actually live. Verified 2026-11-01:
+  # this is the engine's DB_TABLE_PREFIX rows (ten x_* tables in public);
+  # open_box exists but holds nothing, and no openbox_* table exists in any
+  # schema. That pattern is kept as a forward guard, not as a claim — the run
+  # fails if a schema matching it ever appears outside ALLOWED_SCHEMAS.
   "${PSQL[@]}" -tAc "
     SELECT DISTINCT table_schema
       FROM information_schema.tables
