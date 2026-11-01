@@ -311,12 +311,13 @@ Two more failures were in the upload half, after a verified archive existed:
 
 What is now true, from read-only queries against `huadtiuuoiriqrjpjxhr` rather than from a workflow log:
 
-- `storage.objects` holds two archives in `open-box-backups`, `openbox-db-20261101T110457Z.sql.gz` (4,409,890 bytes) and `openbox-db-20261101T110517Z.sql.gz` (4,410,086 bytes), written at 11:05Z and 11:06Z on 2026-11-01. Those are the first Open-Box database backups that exist, twelve days after the last one failed.
+- `open-box#79` merged as `3f571aa0`, and a dispatch of `Open-Box Backup Supabase` on it (`41302547986`) is the first fully green run of this job: `using /usr/lib/postgresql/17/bin/pg_dump (17) against server major 17`, `schemas holding Open-Box tables: public`, `verified: openbox-tables=10 tables-in-archive=103 copy-sections=103 sha256=35151dec…`, then `bucket already exists (HTTP 400)` → `archive stored` → `manifest stored alongside the archive`, with the artifact uploaded at 4,415,316 bytes.
+- `storage.objects` — read independently of the workflow log — holds three archives and one manifest in `open-box-backups`: `openbox-db-20261101T110457Z.sql.gz` (4,409,890 B), `openbox-db-20261101T110517Z.sql.gz` (4,410,086 B), `openbox-db-20261101T113609Z.sql.gz` (4,413,831 B) and `openbox-db-20261101T113609Z.sql.gz.manifest.json` (346 B). The first two came from `Open-Box Maintenance`'s `backup-db` and the earlier dispatch that got past the dump; all were written on 2026-11-01, twelve days after the last successful backup.
 - `open-box-backups` and `open-box-files` were created 2026-09-22; `open-box-files` has no objects.
 - The ten Open-Box tables are `x_access_tokens`, `x_meta`, `x_revoked_sessions`, `x_search_nodes`, `x_setting_items`, `x_sharing_dbs`, `x_ssh_public_keys`, `x_storages`, `x_task_items`, `x_users`, all in `public`. `open_box` exists and is empty. See the "Database ground truth" note in [CONFIG_MAP.md](../../deploy/CONFIG_MAP.md).
 - None of this repository's ten `supabase/migrations/*` versions are in `supabase_migrations.schema_migrations` (which holds 104 other rows), so the platform schema in the repo has never been applied to production. Applying it stays a separate reviewed change; a CI job must not do it as a side effect.
 
-Still open on this path: a restore has never been executed, so "verified archive" means the scope and contents were checked, not that the file can rebuild an installation. That test needs an isolated target, not this database. The nightly cron is the thing to watch — one green dispatch proves the pipeline, not the schedule.
+Still open on this path: a restore has never been executed, so "verified archive" means the scope and contents were checked, not that the file can rebuild an installation. That test needs an isolated target, not this database. The nightly cron (`02:00`) has not yet run on the fixed script — the maintenance job's `backup-db` and one manual dispatch prove the pipeline, not the schedule.
 
 ## Remaining rollout gates
 
