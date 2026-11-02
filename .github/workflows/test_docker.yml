@@ -1,10 +1,39 @@
 name: Beta Release (Docker)
 
+# This workflow used to run on every push to `main`, which made it a second,
+# undocumented deployment channel for open-box.space.
+#
+# What was observed on 2026-11-01: the gated promotion run `41314770281`
+# (14:09:32Z) pinned `hillstreet/open-box:main-7af6579`, and the site served
+# `Build at: 2026-11-01 13:19:10` with `Frontend: v4.2.10`. Roughly an hour
+# later it served `Build at: 2026-11-01 14:39:56` with `Frontend: v4.2.9`,
+# with no promotion run, no redeploy and no `latest` re-point anywhere.
+#
+# That second image is not on Docker Hub. The `Open-Box Docker Hub` build of
+# the same commit logs `frontend version: v4.2.10` on both architectures and
+# published only `main-a4f4923`; `latest` still resolves to the 13:47 digest.
+# The image that matches is the one this workflow built for that commit: its
+# binary job logged `frontend version: edge` at 14:39:28 and its image push
+# finished at 14:42:48. The fork's `edge` release is titled "Pre-release
+# v4.2.9-5de795c", so a container made from it reports v4.2.9 while really
+# serving the fork's rebuilt console chunks — which is exactly what the
+# origin now returns for `/assets/manage-CtnRFoSL.js` and
+# `/assets/store-LOm5VZiC.js`.
+#
+# So `ghcr.io/hillstreet-ph/open-box:beta` was moving on every merge, the
+# service was following it, and `openbox-deploy.yml` — which resolves tags on
+# Docker Hub only — could neither see it nor gate it. Production no longer
+# publishes here: the rolling channel is dispatched by hand, and the only path
+# to the live site is the promotion gate. Pull-request builds are kept; they
+# never pushed anything, because publishing was already gated on the event.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      confirm_rolling_publish:
+        description: "Publish ghcr.io/<org>/open-box:beta, which any service tracking that tag will pick up"
+        required: true
+        type: bool
+        default: false
   pull_request:
     branches:
       - main
@@ -19,7 +48,7 @@ env:
   REGISTRY: ghcr.io
   ARTIFACT_NAME: 'binaries_docker_release'
   RELEASE_PLATFORMS: 'linux/amd64,linux/arm64,linux/arm/v7,linux/386,linux/arm/v6,linux/ppc64le,linux/riscv64,linux/loong64' ### Temporarily disable Docker builds for linux/s390x architectures for unknown reasons.
-  IMAGE_PUSH: ${{ github.event_name == 'push' }}
+  IMAGE_PUSH: ${{ github.event.inputs.confirm_rolling_publish == 'true' }}
   IMAGE_TAGS_BETA: |
     type=ref,event=pr
     type=raw,value=beta,enable={{is_default_branch}}
