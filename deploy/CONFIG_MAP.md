@@ -11,7 +11,11 @@ Never commit secret values. Store secrets only in provider secret managers.
 This is the decided topology, not yet the observed one. The Worker's `ORIGIN_URL`
 still points at the retired Zeabur origin (`https://open-box-space.zeabur.app`),
 so the public site is down until step 5 of
-[the Railway runbook](railway/README.md) repoints it. See
+[the Railway runbook](railway/README.md) repoints it — which the deploy workflow
+now does itself, as a `PATCH` of the Worker's settings, once the Railway half of
+its gate has passed. That step is merged but has never run against production,
+because it sits behind the one human-only prerequisite: `secrets.RAILWAY_TOKEN`.
+Read the Cloudflare rows below as the verified state as of 2026-11-05, and
 [the production status](../docs/platform/PRODUCTION_STATUS.md) for what is
 verified and what is not.
 
@@ -20,14 +24,16 @@ verified and what is not.
 | Kind | Name | Purpose |
 |------|------|---------|
 | Actions secret | `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Publish `hillstreet/open-box`; reused by the Railway promotion (same image repository) |
-| Actions secret | `RAILWAY_TOKEN` | Railway API token for `openbox-deploy-railway.yml`. **Not set.** Minted in the Railway dashboard by the account holder and stored from a terminal with `read -s` — never through a chat transcript or a command line. Until it exists, no Railway write can run. |
+| Actions secret | `RAILWAY_TOKEN` | Railway API token for `openbox-deploy-railway.yml`. **Not set — the one human-only prerequisite for the whole migration.** Mint it in the Railway dashboard and store it from a terminal with `read -s` — never through a chat transcript or a command line. A dashboard token cannot be minted through the API: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` all answer `INTERNAL_SERVER_ERROR "Not Authorized"` to an authenticated CLI session, linked to the project or not. Prefer a **project token** scoped to `open-box` / `production` over a workspace token — the workspace also holds `open-system` and `TGate Worker`, and `ApiTokenCreateInput` has no expiry or scope field, so a workspace token is permanent and broad. Until it exists, no Railway write can run. |
 | Actions secret | `SUPABASE_DB_URL` | Scoped Postgres DSN consumed by the Railway provisioning step |
 | Actions secret | `ZEABUR_API_TOKEN` | Retired platform; read-only diagnostics only |
 | Actions variable | `RAILWAY_PROJECT_ID` | Set: `b65f4f52-404d-4dcb-be94-14a76f9d55ff` |
 | Actions variable | `RAILWAY_ENVIRONMENT_NAME` | Set: `production` (lowercase — the name the CLI created; the workflow's own default is `Production`, so the variable is what makes the lookup agree) |
 | Actions secret | `SUPABASE_*` | Project ref, access token, DB URL, JWT, service role |
 | Actions secret | `OAUTH_GITHUB_*` | GitHub OAuth app for Supabase Auth |
-| Actions secret | `CLOUDFLARE_*` | Edge/DNS automation |
+| Actions secret | `CLOUDFLARE_API_KEY` / `CLOUDFLARE_EMAIL` | **Both set** (2026-09-01). Consumed by the edge-cutover step of `openbox-deploy-railway.yml`, which exchanges them for a Basic header. They exist, but no CI run has yet made a Workers write with them, so the key's Workers scope is unproven until the first real run. |
+| Actions variable | `CLOUDFLARE_ACCOUNT_ID` | Not set. The workflow probes every account the key can reach and refuses to guess if more than one owns the Worker, so a run still works without it; setting it to `c0e6bd9a7249856cb8497e7fe340e7ce` (HillStreet, verified 2026-11-05) removes that failure mode. |
+| Actions variable | `CLOUDFLARE_WORKER_NAME` | Not set; the workflow defaults to `open-box-gateway`, which is the live Worker. |
 | Public config | `deploy/*`, `.env.example` | Non-secret contracts only |
 
 ## Docker Hub
@@ -46,11 +52,11 @@ verified and what is not.
 |----------|---------|
 | Zone `open-box.space` | DNS + TLS |
 | DNS CNAME apex | → `open-box-space.zeabur.app` (proxied) — stale since the retirement; a cleanup item, not the cutover switch, because the Worker is the front door |
-| Worker `open-box-gateway` | Front door + `/auth/*`; deployed by hand with `npx wrangler deploy`, there is no CI path for it |
-| Worker binding `ORIGIN_URL` | **Must become the Railway service domain** printed by runbook step 3. It still holds the retired `https://open-box-space.zeabur.app`, which is why `open-box.space` is down. |
+| Worker `open-box-gateway` | Front door + `/auth/*`. id `ed09dd4a680d4aa5bb06c1e0e67a1474`, account `c0e6bd9a7249856cb8497e7fe340e7ce`, `last_deployed_from: api`. Code and non-secret config still ship by hand with `npx wrangler deploy`; the **`ORIGIN_URL` value alone now has a CI path** — the deploy workflow patches the Worker's settings, which does not touch the uploaded code. Eight bindings live today: `ai AI`, `kv_namespace AI_CONFIG` (namespace `c400d6e5e1bf44fc96a6ae32f09b5bd1`), `secret_text AI_CONFIG_KEY`, and `plain_text` `APP_NAME` / `AUTH_REQUIRED` / `ORIGIN_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_URL`. A `wrangler deploy` that reconciles against the committed `wrangler.toml` would drop the bindings it does not describe, which is why the cutover is a settings `PATCH` and not a deploy. |
+| Worker binding `ORIGIN_URL` | **Must become the Railway service domain** printed by runbook step 3. It still holds the retired `https://open-box-space.zeabur.app`, which is why `open-box.space` is down. It is a `plain_text` binding, so the CI `PATCH` can rewrite it; the step refuses outright if it ever finds this name bound as a secret, because the fix would then be a dashboard edit, not a rewrite. |
 | Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway; both must belong to `huadtiuuoiriqrjpjxhr`; bind the existing matching key reference without rotating it |
 | Worker binding `AUTH_REQUIRED` | `false` until forced auth desired; never `true` without a verified OAuth login path |
-| Worker route for `open-box.space` | Attached in the Cloudflare dashboard, not in the repo: `deploy/cloudflare/wrangler.toml` carries no `routes` and no `workers_dev` key, so the committed config describes less than what is live. **Open item:** record the live route/`workers_dev` state there before attempting any non-interactive `wrangler deploy`, because a deploy that reconciles against an incomplete config can detach the domain from an already-down site. Rationale and the pre-check are in [the runbook](railway/README.md), step 5. |
+| Worker route for `open-box.space` | **Verified 2026-11-05, read-only:** zone `1b29650bfff8e88bb8ceb2c7b9fc60a9`, route `b5f5a3f49b874eb48e56ab777ffe1f16` = `open-box.space/*` → `open-box-gateway`. The route is attached in the dashboard, not in the repo: `deploy/cloudflare/wrangler.toml` carries no `routes` and no `workers_dev` key, so the committed config still describes less than what is live. That is the reason the cutover never calls `wrangler deploy` — a deploy reconciled against the incomplete config can detach the domain from an already-down site. A settings `PATCH` does not touch zone routes; the workflow re-reads the route after writing and hard-fails if the domain has come unattached, and degrades to an explicit `route_verified=unverified` warning only when the zone itself is unreadable. See [the runbook](railway/README.md), step 5. |
 | R2 `open-box-files` / `open-box-backups` | Object storage |
 
 ## Supabase project `open-platform` (`huadtiuuoiriqrjpjxhr`)
@@ -103,7 +109,7 @@ ten Open-Box tables and a count comparison rejects a correct archive.
 | Volume | mounted at `/opt/openlist/data` (created by the provisioning step) |
 | Env public | `SITE_URL`, `PUBLIC_DOMAIN`, `TZ=Asia/Manila`, `UMASK=022`, `DB_TYPE=postgres`, `DB_TABLE_PREFIX=x_` |
 | Env secret | `DB_DSN` (from `secrets.SUPABASE_DB_URL`, read from a `0600` temp file by jq), `RAILWAY_RUN_UID=0` |
-| Domain | the Railway-issued `*.up.railway.app` service domain, printed by step 3 and pasted into the Worker's `ORIGIN_URL` |
+| Domain | the Railway-issued `*.up.railway.app` service domain, printed by step 3 and written into the Worker's `ORIGIN_URL` by the workflow's edge-cutover step (previously a manual dashboard edit) |
 
 `RAILWAY_RUN_UID=0` is not a preference. The image runs as uid 1001, but Railway
 mounts the volume root-owned, so an unprivileged process cannot write

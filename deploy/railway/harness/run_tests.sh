@@ -18,6 +18,7 @@ YAML="$REPO/.github/workflows/openbox-deploy-railway.yml"
 RP=8471          # mock Railway API
 OG=8472          # mock origin used for the "edge is down" cases
 OGUP=8473        # mock origin, healthy
+CF=8474          # mock Cloudflare Workers API
 fail=0
 ok() { echo "PASS  $1"; }
 ko() { echo "FAIL  $1 -- $2"; fail=1; }
@@ -46,13 +47,15 @@ IMG=step_image.sh
 ROL=step_roll.sh
 PRV=step_provision.sh
 WAT=step_Wait_for_the_deployment_to_report_ready.sh
-GAT=step_Production_gate_health_PAT_routes_database_backed_reads_storage_TLS.sh
+GAT=step_gate.sh
+EDG=step_edge.sh
+EDGATE=step_Production_gate_Cloudflare_edge.sh
 PUB=step_Publish_the_channel_build_Docker_Hub_manifest_copy.sh
 RTO=step_Confirm_the_rotation_precondition.sh
 BIN=step_Check_required_bindings.sh
 REP=step_Report_the_running_artifact.sh
-CLN=step_Clear_Railway_credential_files.sh
-for f in "$TGT" "$BEF" "$IMG" "$ROL" "$PRV" "$WAT" "$GAT" "$PUB" "$RTO" "$BIN" "$REP" "$CLN"; do
+CLN=step_Clear_Railway_and_Cloudflare_credential_files.sh
+for f in "$TGT" "$BEF" "$IMG" "$ROL" "$PRV" "$WAT" "$GAT" "$EDG" "$EDGATE" "$PUB" "$RTO" "$BIN" "$REP" "$CLN"; do
   [ -f "$f" ] || { echo "harness: extracted $f is missing"; exit 1; }
 done
 
@@ -74,6 +77,35 @@ export RW_MOCK_STATE="$WORK/state.json"
 export RW_MOCK_LOG="$WORK/reqs.log"
 printf 'Authorization: Bearer harness-token\n' > /tmp/rw.header
 chmod 600 /tmp/rw.header
+
+# The Cloudflare fixture mirrors the shapes read from the live open-box-gateway
+# Worker on 2026-11-05: one ai binding, one kv_namespace, one unreadable
+# secret_text, four plain_text variables, ORIGIN_URL still naming the retired
+# Zeabur host, plus a zone route that the settings PATCH must not disturb.
+cat > cf_state_clean.json <<'JSON'
+{
+  "accounts": [{"id": "acc-hillstreet", "name": "HillStreet"}, {"id": "acc-other", "name": "Other"}],
+  "worker_accounts": {"open-box-gateway": ["acc-hillstreet"], "foreign-worker": ["acc-other"]},
+  "workers": [
+    {"name": "open-box-gateway", "tag": "ed09dd4a680d4aa5bb06c1e0e67a1474",
+     "bindings": [
+       {"type": "ai", "name": "AI"},
+       {"type": "kv_namespace", "name": "AI_CONFIG", "namespace_id": "c400d6e5e1bf44fc96a6ae32f09b5bd1"},
+       {"type": "secret_text", "name": "AI_CONFIG_KEY"},
+       {"type": "plain_text", "name": "APP_NAME", "text": "Open-Box"},
+       {"type": "plain_text", "name": "AUTH_REQUIRED", "text": "false"},
+       {"type": "plain_text", "name": "ORIGIN_URL", "text": "https://open-box-space.zeabur.app"},
+       {"type": "plain_text", "name": "SUPABASE_URL", "text": "https://example.supabase.co"}
+     ]},
+    {"name": "foreign-worker", "tag": "ffff", "bindings": [{"type": "plain_text", "name": "ORIGIN_URL", "text": "https://elsewhere.example"}]}
+  ],
+  "zones": [{"id": "zone-1", "name": "open-box.space"}],
+  "routes": [{"id": "r1", "zone_id": "zone-1", "pattern": "open-box.space/*", "script": "open-box-gateway"}]
+}
+JSON
+export CF_MOCK_STATE="$WORK/cf_state.json"
+export CF_MOCK_LOG="$WORK/cf_reqs.log"
+reset_cf() { cp cf_state_clean.json cf_state.json; }
 
 wait_up() {
   local n=0
@@ -115,6 +147,13 @@ start_railway() {
   python3 "$HERE/mock_railway.py" "$RP" >/dev/null 2>&1 &
   port_up "$RP" || { echo "harness: mock Railway did not start"; exit 1; }
 }
+start_cloudflare() {
+  pkill -f "mock_cloudflare.py $CF" 2>/dev/null
+  port_free "$CF" || { echo "harness: port $CF never freed"; exit 1; }
+  python3 "$HERE/mock_cloudflare.py" "$CF" >/dev/null 2>&1 &
+  port_up "$CF" || { echo "harness: mock Cloudflare did not start"; exit 1; }
+}
+use_cf_profile() { export CF_MOCK_PROFILE="$1"; start_cloudflare; }
 # the mock fixes its profile at process start, so every profile change restarts
 use_profile() { export RW_MOCK_PROFILE="$1"; start_railway; }
 start_origin() { # port  KEY=value ...
@@ -155,7 +194,7 @@ json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))'
 
 run_step() { # file [VAR=val ...]
   local file="$1"; shift
-  : > out.txt; : > reqs.log; : > stdout.txt; : > stderr.txt
+  : > out.txt; : > reqs.log; : > cf_reqs.log; : > stdout.txt; : > stderr.txt
   env HOME="$WORK" GITHUB_OUTPUT="$WORK/out.txt" GITHUB_STEP_SUMMARY="$WORK/summary.md" \
     SITE_URL="http://127.0.0.1:$OG" \
     RAILWAY_API="http://127.0.0.1:$RP/graphql/v2" RAILWAY_HEADER=/tmp/rw.header \
@@ -165,17 +204,29 @@ run_step() { # file [VAR=val ...]
     PROJECT_ID=prj-openbox EXPECTED_PROJECT_NAME=open-box \
     ENVIRONMENT_NAME=Production SERVICE_NAME=open-box MOUNT_PATH=/opt/openlist/data \
     ORIGIN_OVERRIDE="" RETIRED_ZEABUR_PROJECT_ID=ymhiwerqyegvondndkjn \
+    CLOUDFLARE_API="http://127.0.0.1:$CF/client/v4" CLOUDFLARE_HEADER=/tmp/cf.header \
+    CLOUDFLARE_API_KEY=cfkey CLOUDFLARE_EMAIL=cf@example.com \
+    CLOUDFLARE_ACCOUNT_ID=acc-hillstreet CF_TIMEOUT=5 VERIFY_ONLY=false \
+    WORKER_NAME=open-box-gateway \
     MODE="promote and verify" DB_DSN="postgres://u:p@h/db" \
     "$@" bash "$file" >stdout.txt 2>stderr.txt
   RC=$?
 }
 show() { echo "rc=$RC out:$(tail -3 stdout.txt | tr '\n' '|') err:$(tail -3 stderr.txt | tr '\n' '|')"; }
 gate_run() { # origin-port [extra env]
+  # Runs the shipped halves in the shipped order: the Railway gate, then the
+  # edge gate with whatever the cutover reported (EDGE_WRITE, defaulted here).
+  # A Railway-gate failure stops, because that is what the runner does.
   local port="$1"; shift
   run_step "$GAT" ORIGIN_URL="http://127.0.0.1:$port" \
     EXPECTED_TAG=main-1e7093f BEFORE_VERSION="" BEFORE_ASSETS="" \
     EXPECTED_FRONTEND_ASSET=index-DXZYoYrc.js EXPECTED_SITE_NAME=Open-Box \
     VERIFY_ONLY=false SITE_URL="http://127.0.0.1:$port" "$@"
+  [ "$RC" = 0 ] || return 0
+  run_step "$EDGATE" ORIGIN_URL="http://127.0.0.1:$port" \
+    EXPECTED_TAG=main-1e7093f EXPECTED_FRONTEND_ASSET=index-DXZYoYrc.js \
+    EDGE_WRITE="${EDGE_WRITE:-unchanged}" WORKER_NAME=open-box-gateway \
+    SITE_URL="http://127.0.0.1:$port" "$@"
 }
 
 reset_state
@@ -311,11 +362,22 @@ else ko "T13b spa" "$(show)"; fi
 # T14 — Railway healthy, edge still down: names the cutover
 start_origin "$OGUP" RW_ORIGIN_SITE_NAME=Open-Box RW_ORIGIN_ASSET=index-DXZYoYrc.js
 start_origin "$OG" RW_ORIGIN_DOWN=1
-gate_run "$OGUP" SITE_URL="http://127.0.0.1:$OG"
-if [ "$RC" != 0 ] && has 'the remaining work is the cutover' \
-   && grep -qs "http://127.0.0.1:$OGUP" stdout.txt stderr.txt; then
-  ok "T14 gate names the Worker cutover and the URL to point at when only the edge is down"
+EDGE_WRITE=skipped gate_run "$OGUP" SITE_URL="http://127.0.0.1:$OG"
+if [ "$RC" != 0 ] && has 'edge cutover step was skipped' \
+   && has 'CLOUDFLARE_API_KEY' && has 'verify-only run'; then
+  ok "T14 the edge gate names the skipped cutover and the three reasons it could have been skipped"
 else ko "T14 cutover message" "$(show)"; fi
+
+# T14b — the Railway half passes on its own even while the edge is dead, which
+#         is what lets the cutover step run at all during a recovery.
+start_origin "$OG" RW_ORIGIN_DOWN=1
+run_step "$GAT" ORIGIN_URL="http://127.0.0.1:$OGUP" EXPECTED_TAG=main-1e7093f \
+  EXPECTED_FRONTEND_ASSET=index-DXZYoYrc.js EXPECTED_SITE_NAME=Open-Box \
+  BEFORE_VERSION="" BEFORE_ASSETS="" \
+  VERIFY_ONLY=false SITE_URL="http://127.0.0.1:$OG"
+if [ "$RC" = 0 ] && has 'Railway origin checks passed'; then
+  ok "T14b the Railway gate half is independent of the edge, so a recovery run can reach the cutover"
+else ko "T14b railway-only gate" "$(show)"; fi
 
 # T15 — the before-state capture tolerates a dead origin (recovery run)
 start_origin "$OG" RW_ORIGIN_DOWN=1
@@ -454,10 +516,12 @@ env HOME="$WORK" GITHUB_STEP_SUMMARY="$WORK"/summary.md GITHUB_OUTPUT="$WORK"/ou
   DOCKERHUB_NAMESPACE=hillstreet IMAGE_NAME=open-box CHANNEL_TAG=railway PROJECT_ID=prj-openbox \
   MOUNT_PATH=/opt/openlist/data ORIGIN_URL="http://127.0.0.1:$OGUP" SERVICE_ID=svc-old \
   ENVIRONMENT_ID=env-prod DEPLOYMENT_ID=dep-new CHANNEL_DIGEST_BEFORE=sha256:zzz \
+  WORKER_NAME=open-box-gateway EDGE_WRITE=skipped EDGE_ACCOUNT=none EDGE_OLD_ORIGIN=none \
+  EDGE_NEW_ORIGIN=none EDGE_ROUTE=not-checked \
   bash "$REP" >stdout.txt 2>stderr.txt
 RC=$?
 if [ "$RC" = 0 ] && grep -q 'Railway promotion report' summary.md && grep -q 'rollback' summary.md \
-   && ! grep -q 'harness-token' summary.md; then
+   && grep -q 'edge: .skipped.' summary.md && ! grep -q 'harness-token' summary.md; then
   ok "T24 report records the channel digest and the rollback command without leaking the token"
 else ko "T24 report" "rc=$RC summary=$(head -4 summary.md | tr '\n' '|') $(show)"; fi
 
@@ -470,7 +534,165 @@ if [ "$RC" = 0 ] && [ ! -e /tmp/rw.header ] && [ ! -e /tmp/rw_gql.sh ] && [ ! -e
   ok "T25 the always-run cleanup deletes the bearer and response files"
 else ko "T25 cleanup" "rc=$RC header=$([ -e /tmp/rw.header ] && echo present || echo gone)"; fi
 
+# --------------------------------------------------------------------- edge
+# The Cloudflare cutover step, executed as shipped against mock_cloudflare.py.
+cf_bindings() { # worker
+  python3 -c '
+import json,sys
+st=json.load(open("cf_state.json"))
+w=[x for x in st["workers"] if x["name"]==sys.argv[1]][0]
+print(json.dumps(w["bindings"], sort_keys=True))' "$1"
+}
+cf_binding() { # worker name field
+  python3 -c '
+import json,sys
+st=json.load(open("cf_state.json"))
+w=[x for x in st["workers"] if x["name"]==sys.argv[1]][0]
+hit=[b for b in w["bindings"] if b["name"]==sys.argv[2]]
+print("" if not hit else str(hit[0].get(sys.argv[3], "")))' "$1" "$2" "$3"
+}
+EDGE_URL="https://open-box-production.up.railway.app"
+edge_run() { # [extra env]
+  run_step "$EDG" ORIGIN_URL="$EDGE_URL" SITE_URL="https://open-box.space" "$@"
+}
+
+# T26 — the cutover rewrites ORIGIN_URL and nothing else
+reset_cf; use_cf_profile existing
+edge_run
+mode=$(python3 -c 'import os,sys;print(oct(os.stat("/tmp/cf.header").st_mode & 0o777))')
+b_names=$(cf_bindings open-box-gateway | python3 -c 'import json,sys;print(",".join(sorted(b["name"] for b in json.loads(sys.stdin.read()))))')
+secret_type=$(cf_binding open-box-gateway AI_CONFIG_KEY type)
+new_origin=$(cf_binding open-box-gateway ORIGIN_URL text)
+app_name=$(cf_binding open-box-gateway APP_NAME text)
+kv_ns=$(cf_binding open-box-gateway AI_CONFIG namespace_id)
+if [ "$RC" = 0 ] && [ "$new_origin" = "$EDGE_URL" ] && [ "$secret_type" = "secret_text" ] \
+   && [ "$b_names" = "AI,AI_CONFIG,AI_CONFIG_KEY,APP_NAME,AUTH_REQUIRED,ORIGIN_URL,SUPABASE_URL" ] \
+   && [ "$app_name" = "Open-Box" ] && [ "$kv_ns" = "c400d6e5e1bf44fc96a6ae32f09b5bd1" ] \
+   && grep -qs '^PATCH ' cf_reqs.log && grep -q '^edge_write=wrote$' out.txt \
+   && grep -q '^route_verified=yes$' out.txt && [ "$mode" = "0o600" ]; then
+  ok "T26 the cutover replaces ORIGIN_URL alone, keeps the ai/kv/plain bindings and the unreadable secret, and re-verifies the route"
+else ko "T26 cutover write" "rc=$RC origin=$new_origin secret=$secret_type names=$b_names app=$app_name kv=$kv_ns mode=$mode $(show)"; fi
+
+# T27 — no credentials means no write, not a failure
+reset_cf; use_cf_profile existing
+edge_run CLOUDFLARE_API_KEY="" CLOUDFLARE_EMAIL=""
+if [ "$RC" = 0 ] && grep -q '^edge_write=skipped$' out.txt && ! grep -qs '^PATCH ' cf_reqs.log; then
+  ok "T27 missing Cloudflare credentials skip the cutover loudly instead of failing a Railway promotion"
+else ko "T27 no credentials" "$(show)"; fi
+
+# T28 — an unresolved origin means no write
+reset_cf; use_cf_profile existing
+edge_run ORIGIN_URL=""
+if [ "$RC" = 0 ] && grep -q '^edge_write=skipped$' out.txt && ! grep -qs '^PATCH ' cf_reqs.log; then
+  ok "T28 the cutover refuses to guess an origin and writes nothing"
+else ko "T28 no origin" "$(show)"; fi
+
+# T29 — idempotent: already repointed, so no PATCH is issued
+reset_cf; use_cf_profile already_railway
+edge_run
+if [ "$RC" = 0 ] && grep -q '^edge_write=unchanged$' out.txt && ! grep -qs '^PATCH ' cf_reqs.log \
+   && has 'already points at this Railway origin'; then
+  ok "T29 a Worker that already points at the Railway origin is left untouched"
+else ko "T29 idempotent" "$(show)"; fi
+
+# T30 — verify-only reads the state and writes nothing
+reset_cf; use_cf_profile existing
+edge_run VERIFY_ONLY=true
+if [ "$RC" = 0 ] && grep -q '^edge_write=skipped$' out.txt && ! grep -qs '^PATCH ' cf_reqs.log \
+   && has 'verify-only run'; then
+  ok "T30 verify-only mode reports the drift it found without repointing the edge"
+else ko "T30 verify only" "$(show)"; fi
+
+# T31 — a Worker without an ORIGIN_URL binding is refused, not guessed
+reset_cf; use_cf_profile no_origin_binding
+edge_run
+if [ "$RC" != 0 ] && has 'has no ORIGIN_URL binding' && ! grep -qs '^PATCH ' cf_reqs.log; then
+  ok "T31 the cutover refuses to invent a binding name when the live Worker lacks ORIGIN_URL"
+else ko "T31 missing binding" "$(show)"; fi
+
+# T32 — an ORIGIN_URL stored as a secret is refused with the reason
+reset_cf; use_cf_profile origin_is_secret
+edge_run
+if [ "$RC" != 0 ] && has "is a 'secret_text' binding" && ! grep -qs '^PATCH ' cf_reqs.log; then
+  ok "T32 the cutover refuses to overwrite a secret-shaped ORIGIN_URL it cannot restate"
+else ko "T32 secret-shaped origin" "$(show)"; fi
+
+# T33 — the account is resolved by probing when nothing is configured
+reset_cf; use_cf_profile existing
+edge_run CLOUDFLARE_ACCOUNT_ID=""
+if [ "$RC" = 0 ] && grep -q '^account=acc-hillstreet$' out.txt \
+   && has 'resolved account: acc-hillstreet' && grep -qs 'GET /client/v4/accounts ' cf_reqs.log; then
+  ok "T33 with no account binding the cutover finds the one account that owns the Worker"
+else ko "T33 account discovery" "rc=$RC $(show) out=$(tr '\n' ' ' < out.txt)"; fi
+
+# T34 — a rejected PATCH is reported as a failure, never as a completed cutover
+reset_cf; use_cf_profile patch_rejected
+edge_run
+if [ "$RC" != 0 ] && has 'the settings PATCH was rejected' && [ "$(cf_binding open-box-gateway ORIGIN_URL text)" != "$EDGE_URL" ]; then
+  ok "T34 a rejected settings PATCH fails the run and leaves the Worker on its old origin"
+else ko "T34 patch rejected" "$(show)"; fi
+
+# T35 — a detached zone route is a hard failure after a successful write
+reset_cf; use_cf_profile route_detached
+edge_run
+if [ "$RC" != 0 ] && has 'is no longer routed' && [ "$(cf_binding open-box-gateway ORIGIN_URL text)" = "$EDGE_URL" ]; then
+  ok "T35 the cutover verifies the zone route survived and stops the run when it did not"
+else ko "T35 route detached" "$(show)"; fi
+
+# T36 — an unreadable zone degrades to a named gap, not a false all-clear
+reset_cf; use_cf_profile zone_unreadable
+edge_run
+if [ "$RC" = 0 ] && grep -q '^edge_write=wrote$' out.txt && grep -q '^route_verified=unverified$' out.txt \
+   && has 'route attachment was not verified'; then
+  ok "T36 an unreadable zone records the unverified route as a warning instead of claiming success"
+else ko "T36 zone unreadable" "$(show)"; fi
+
+# T37 — the Basic header is sent on every call and the key never reaches a log
+reset_cf; use_cf_profile existing
+edge_run
+sent=$(grep -c 'Basic ' cf_reqs.log || true)
+if [ "$RC" = 0 ] && [ "$sent" -ge 3 ] && hasnt 'cfkey' && hasnt 'cf@example.com' \
+   && ! grep -qs 'cfkey' cf_reqs.log && ! grep -qs 'Bearer' cf_reqs.log; then
+  ok "T37 every Cloudflare call carries the Basic header from the 0600 file and no key value is logged"
+else ko "T37 credential hygiene" "rc=$RC sent=$sent $(show)"; fi
+
+# T38 — the edge gate names the write it just performed when the edge still fails
+reset_cf; use_cf_profile existing
+start_origin "$OGUP" RW_ORIGIN_SITE_NAME=Open-Box RW_ORIGIN_ASSET=index-DXZYoYrc.js
+start_origin "$OG" RW_ORIGIN_DOWN=1
+run_step "$EDGATE" ORIGIN_URL="http://127.0.0.1:$OGUP" SITE_URL="http://127.0.0.1:$OG" \
+  EXPECTED_TAG=main-1e7093f EXPECTED_FRONTEND_ASSET=index-DXZYoYrc.js \
+  EDGE_WRITE=wrote WORKER_NAME=open-box-gateway
+if [ "$RC" != 0 ] && has 'was repointed at http://127.0.0.1:' && has 'not the old Zeabur route'; then
+  ok "T38 after a real cutover the edge gate says the Worker was repointed rather than blaming the old route"
+else ko "T38 edge gate wording" "$(show)"; fi
+
+# T39 — the report renders the edge line and does not leak the Cloudflare key
+reset_cf; use_cf_profile existing
+: > summary.md
+env HOME="$WORK" GITHUB_STEP_SUMMARY="$WORK/summary.md" GITHUB_OUTPUT="$WORK/out.txt" \
+  RAILWAY_API="http://127.0.0.1:$RP/graphql/v2" RAILWAY_HEADER=/tmp/rw.header \
+  DOCKERHUB_NAMESPACE=hillstreet IMAGE_NAME=open-box CHANNEL_TAG=railway PROJECT_ID=prj-openbox \
+  MOUNT_PATH=/opt/openlist/data ORIGIN_URL="http://127.0.0.1:$OGUP" SERVICE_ID=svc-old \
+  ENVIRONMENT_ID=env-prod DEPLOYMENT_ID=dep-new CHANNEL_DIGEST_BEFORE=sha256:zzz \
+  WORKER_NAME=open-box-gateway EDGE_WRITE=wrote EDGE_ACCOUNT=acc-hillstreet \
+  EDGE_OLD_ORIGIN=https://open-box-space.zeabur.app EDGE_NEW_ORIGIN="$EDGE_URL" EDGE_ROUTE=yes \
+  bash "$REP" >stdout.txt 2>stderr.txt
+RC=$?
+if [ "$RC" = 0 ] && grep -q 'edge: .wrote. on .open-box-gateway.' summary.md \
+   && grep -q 'retired Zeabur host' summary.md && ! grep -q 'cfkey' summary.md; then
+  ok "T39 the report records the edge write and explains why the edge is not part of the rollback"
+else ko "T39 report edge line" "rc=$RC summary=$(head -12 summary.md | tr '\n' '|')"; fi
+
+# T40 — the cleanup step also deletes the Cloudflare header
+printf 'z\n' > /tmp/cf.header; printf 'w\n' > /tmp/cf_api.sh
+run_step "$CLN"
+if [ "$RC" = 0 ] && [ ! -e /tmp/cf.header ] && [ ! -e /tmp/cf_api.sh ]; then
+  ok "T40 the always-run cleanup deletes the Cloudflare credential file too"
+else ko "T40 cleanup cf" "rc=$RC cf.header=$([ -e /tmp/cf.header ] && echo present || echo gone)"; fi
+
 pkill -f mock_railway.py 2>/dev/null
 pkill -f mock_origin.py 2>/dev/null
+pkill -f mock_cloudflare.py 2>/dev/null
 echo "=== harness finished: fail=$fail"
 exit "$fail"

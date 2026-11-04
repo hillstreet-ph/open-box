@@ -25,6 +25,19 @@ name: Open-Box Deploy (Railway)
 #     name assertion: the run refuses to touch a Railway project whose name is
 #     not RAILWAY_PROJECT_NAME, and refuses the retired Zeabur identifier
 #     outright, so a wrong binding is visible in the log before any write.
+#   * The public domain is fronted by the open-box-gateway Cloudflare Worker,
+#     whose ORIGIN_URL binding selects the runtime. Migration is not complete
+#     while that binding still names Zeabur, so the run ends with an edge
+#     cutover: it PATCHes the Worker's settings, replacing the ORIGIN_URL
+#     binding alone. It runs only after the Railway half of the gate has passed,
+#     because this step moves the live public domain. wrangler deploy is
+#     deliberately not used — the committed config describes less than what is
+#     live, and a blind upload could regress the running Worker. The mechanism
+#     was measured on a throwaway Worker first: the PATCH must be
+#     multipart/form-data with a part named "settings", and omitting the
+#     secret_text bindings preserves them, so the unrecoverable AI_CONFIG_KEY
+#     secret survives. Zone routes are a separate resource and are re-read
+#     afterwards to prove the front door is still attached.
 #   * No secret value is ever interpolated into a shell script body. Secrets
 #     arrive through env:, the bearer token is written once by a builtin printf
 #     into a 0600 header file under umask 077, the GraphQL helper lives in
@@ -102,6 +115,10 @@ jobs:
       MOUNT_PATH: ${{ vars.RAILWAY_MOUNT_PATH || '/opt/openlist/data' }}
       ORIGIN_OVERRIDE: ${{ vars.RAILWAY_ORIGIN_URL }}
       RETIRED_ZEABUR_PROJECT_ID: ymhiwerqyegvondndkjn
+      CLOUDFLARE_API: ${{ vars.CLOUDFLARE_API_ROOT || 'https://api.cloudflare.com/client/v4' }}
+      CLOUDFLARE_HEADER: /tmp/cf.header
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME || 'open-box-gateway' }}
       MODE: ${{ inputs.mode }}
 
     steps:
@@ -126,6 +143,8 @@ jobs:
           DB_DSN: ${{ secrets.SUPABASE_DB_URL }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
         run: |
           set -euo pipefail
           missing=0
@@ -169,6 +188,19 @@ jobs:
           strict_shape "vars.RAILWAY_PROJECT_ID" "$PROJECT_ID" 'A-Za-z0-9._-'
           strict_shape "vars.DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" 'A-Za-z0-9._-'
           strict_shape "vars.RAILWAY_CHANNEL_TAG" "$CHANNEL_TAG" 'A-Za-z0-9._+-'
+          strict_shape "vars.CLOUDFLARE_WORKER_NAME" "$WORKER_NAME" 'A-Za-z0-9._-'
+          if [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            strict_shape "vars.CLOUDFLARE_ACCOUNT_ID" "$CLOUDFLARE_ACCOUNT_ID" 'A-Za-z0-9'
+          fi
+          # The edge cutover is the only step that needs Cloudflare, and it is
+          # the last thing to run. Missing credentials narrow the run, they do
+          # not invalidate a Railway promotion, so this is reported as a state
+          # rather than raised as a missing binding.
+          if [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; then
+            echo "::warning::secrets.CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL are not set, so this run cannot repoint the Worker; the edge gate will name the manual cutover if it is still needed."
+          else
+            echo "ok: Cloudflare edge credentials present"
+          fi
           [ "$missing" = "0" ] || exit 1
           echo "Project $PROJECT_ID / environment $ENVIRONMENT_NAME / service $SERVICE_NAME, channel tag $CHANNEL_TAG."
 
@@ -626,7 +658,8 @@ jobs:
           echo "Inspect the Railway deployment log for service $SERVICE_ID in environment $ENVIRONMENT_ID."
           exit 1
 
-      - name: Production gate — health, PAT routes, database-backed reads, storage, TLS
+      - name: Production gate — Railway origin (health, PAT routes, database-backed reads, TLS)
+        id: gate
         env:
           ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.roll.outputs.origin_url || steps.target.outputs.origin_url }}
           EXPECTED_TAG: ${{ steps.image.outputs.tag }}
@@ -720,10 +753,254 @@ jobs:
           tls=$(curl -sS -o /dev/null -w "%{ssl_verify_result}" --max-time 20 "$ORIGIN_URL/ping")
           [ "$tls" = "0" ] || fail "Railway TLS verification returned $tls"
 
-          # The edge is the Cloudflare Worker front door. It only answers once
-          # its ORIGIN_URL binding is repointed at Railway and redeployed, so a
-          # failure here names the remaining cutover step instead of looking
-          # like an application defect.
+          echo "Railway origin checks passed${EXPECTED_TAG:+ for $EXPECTED_TAG}; the public edge is still to be repointed."
+
+      # ---------------------------------------------------------------------
+      # The edge cutover. It runs only after the Railway half of the gate has
+      # passed, because this step moves the live public domain: a Worker whose
+      # ORIGIN_URL still resolves to a dead runtime is an outage, and a Worker
+      # aimed at a container that failed its own health, token, database and
+      # bundle checks is an outage of the operator's own making.
+      #
+      # Mechanism, measured on a throwaway Worker before it was written here:
+      #   PATCH /accounts/{account}/workers/scripts/{worker}/settings
+      #     - must be multipart/form-data with one part named "settings"
+      #     - that part holds {"bindings":[...]} as application/json
+      #     - omitting the secret_text bindings preserves them, so the
+      #       unrecoverable AI_CONFIG_KEY secret survives the rewrite
+      #     - zone routes are a separate resource and are not touched
+      #   wrangler deploy is deliberately NOT used: it uploads the committed
+      #   src/worker.js and its committed ORIGIN_URL, which describes less than
+      #   what is live, so a blind deploy could regress the running Worker.
+      # ---------------------------------------------------------------------
+      - name: Repoint the Cloudflare Worker at the Railway origin
+        id: edge
+        env:
+          ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.roll.outputs.origin_url || steps.target.outputs.origin_url }}
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+          VERIFY_ONLY: ${{ inputs.mode == 'verify only (no write)' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::edge cutover failed: $1"; exit 1; }
+          emit() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [ -z "$ORIGIN_URL" ]; then
+            echo "::warning::no Railway origin was resolved, so nothing was repointed."
+            emit edge_write skipped
+            exit 0
+          fi
+          if [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; then
+            echo "::warning::Cloudflare credentials are absent, so the edge cutover was skipped. The public site keeps pointing where it points today; see deploy/railway/README.md step 5 for the manual route."
+            emit edge_write skipped
+            exit 0
+          fi
+
+          # The token pair becomes a Basic header exactly once, under umask 077,
+          # written by a builtin printf, and every call reads it with -H @file.
+          # No key value is ever interpolated into a script body or a command
+          # line, and the always-run cleanup step deletes the file.
+          umask 077
+          basic=$(printf '%s:%s' "$CLOUDFLARE_EMAIL" "$CLOUDFLARE_API_KEY" | base64 | tr -d '\n')
+          printf 'Authorization: Basic %s\n' "$basic" > "$CLOUDFLARE_HEADER"
+          chmod 600 "$CLOUDFLARE_HEADER"
+          unset basic
+
+          # One helper for every call, shaped like the GraphQL one: the response
+          # goes to stdout, a network failure or a success:false envelope is an
+          # error, and CF_QUIET=1 downgrades it to a note for probing.
+          cat > /tmp/cf_api.sh <<'CFEOF'
+          cfapi() {
+            local method="$1" path="$2" body="${3:-}" f ctype err rc
+            f=$(mktemp) || { echo "::error::mktemp failed" >&2; return 1; }
+            ctype='application/json'
+            if [ "$method" = "PATCH" ]; then
+              # multipart: curl sets the boundary itself, so no Content-Type is
+              # forced here — the real API answers 10001 for anything else.
+              curl -sS --max-time "${CF_TIMEOUT:-30}" -X PATCH "${CLOUDFLARE_API}${path}" \
+                -H "@${CLOUDFLARE_HEADER:-/tmp/cf.header}" \
+                -F "settings=@${body};type=${ctype}" > "$f" 2>/dev/null
+              rc=$?
+            else
+              curl -sS --max-time "${CF_TIMEOUT:-30}" -X "$method" "${CLOUDFLARE_API}${path}" \
+                -H "@${CLOUDFLARE_HEADER:-/tmp/cf.header}" > "$f" 2>/dev/null
+              rc=$?
+            fi
+            if [ "$rc" != 0 ]; then
+              rm -f "$f"
+              echo "::error::Cloudflare API request failed (network): $method $path" >&2
+              return 1
+            fi
+            err=$(jq -r 'if .success then "" else ((.errors // [])[0] | "code \(.code): \(.message)") end' "$f" 2>/dev/null) \
+              || err='response was not valid JSON'
+            if [ -n "${err:-}" ]; then
+              if [ -n "${CF_QUIET:-}" ]; then
+                echo "note: Cloudflare API: $err" >&2
+              else
+                echo "::error::Cloudflare API: $err" >&2
+              fi
+              rm -f "$f"; return 1
+            fi
+            cat "$f"
+            rm -f "$f"
+          }
+          CFEOF
+          . /tmp/cf_api.sh
+
+          # Which account owns the Worker? An explicit binding wins; otherwise
+          # every account the credentials can see is probed, so a key scoped to
+          # several accounts cannot silently rewrite the wrong one.
+          account="${CLOUDFLARE_ACCOUNT_ID:-}"
+          if [ -n "$account" ]; then
+            echo "account from vars.CLOUDFLARE_ACCOUNT_ID: $account"
+          else
+            ids=$(cfapi GET '/accounts' | jq -r '.result[].id // empty' | tr '\n' ' ')
+            [ -n "${ids// /}" ] || fail "the credentials can see no Cloudflare accounts"
+            echo "candidate accounts: $(echo "$ids" | wc -w | tr -d ' ')"
+            for a in $ids; do
+              # A subshell scopes CF_QUIET: a bare `VAR=1 fn` assignment can
+              # outlive the call in bash, which would downgrade every later
+              # error in this step to a note.
+              if ( CF_QUIET=1 cfapi GET "/accounts/$a/workers/scripts/$WORKER_NAME" >/dev/null 2>&1 ); then
+                if [ -n "$account" ]; then
+                  fail "$WORKER_NAME resolves in more than one account ($account and $a); set vars.CLOUDFLARE_ACCOUNT_ID"
+                fi
+                account="$a"
+              fi
+            done
+            [ -n "$account" ] || fail "$WORKER_NAME was not found in any account these credentials can read"
+            echo "resolved account: $account"
+          fi
+
+          settings_path="/accounts/$account/workers/scripts/$WORKER_NAME/settings"
+          before=$(cfapi GET "$settings_path") || fail "could not read the $WORKER_NAME bindings"
+          bindings=$(echo "$before" | jq -c '.result.bindings // []')
+          echo "$WORKER_NAME has $(echo "$bindings" | jq -r 'length') bindings: $(echo "$bindings" | jq -r '[.[] | .name] | join(", ")')"
+
+          # The Worker must actually have the knob this step turns. A missing
+          # ORIGIN_URL means the live Worker is not the one deploy/cloudflare/
+          # wrangler.toml describes, and guessing a binding name is how a
+          # cutover becomes a broken site.
+          has_origin=$(echo "$bindings" | jq -r '[.[] | select(.name=="ORIGIN_URL")] | length')
+          [ "$has_origin" != "0" ] || fail "$WORKER_NAME has no ORIGIN_URL binding, so this step cannot repoint it. Inspect the Worker and update deploy/cloudflare/wrangler.toml before re-running."
+          origin_kind=$(echo "$bindings" | jq -r '[.[] | select(.name=="ORIGIN_URL") | .type][0] // ""')
+          case "$origin_kind" in
+            plain_text|text) ;;
+            *) fail "the ORIGIN_URL binding on $WORKER_NAME is a '$origin_kind' binding, not a plain_text variable. This step only rewrites plain_text, because overwriting a secret through the settings endpoint needs its plaintext value, which is unreadable by design. Convert it to a plain_text binding (or set vars.RAILWAY_ORIGIN_URL and do the edge by hand) first." ;;
+          esac
+
+          current=$(echo "$bindings" | jq -r '[.[] | select(.name=="ORIGIN_URL") | (.text // .value // "")][0] // ""')
+          echo "current ORIGIN_URL: ${current:-<unset>}"
+          echo "target ORIGIN_URL: $ORIGIN_URL"
+          emit account "$account"
+          emit old_origin "${current:-none}"
+
+          if [ "$current" = "$ORIGIN_URL" ]; then
+            echo "the Worker already points at this Railway origin; no write is needed."
+            emit edge_write unchanged
+            exit 0
+          fi
+          if [ "$VERIFY_ONLY" = "true" ]; then
+            echo "::warning::verify-only run: the Worker still points at ${current:-unset} and was left untouched."
+            emit edge_write skipped
+            exit 0
+          fi
+
+          # Build the replacement list from what the API just returned: keep
+          # every binding exactly as it is, drop only secret_text (they cannot be
+          # restated and are preserved server-side when omitted), and rewrite
+          # ORIGIN_URL alone. Names are the unit of comparison, so a binding the
+          # API returns with an unrecognised shape is carried through untouched
+          # rather than reconstructed.
+          payload_body=$(mktemp)
+          chmod 600 "$payload_body"
+          echo "$bindings" | jq -c --arg o "$ORIGIN_URL" \
+            '[ .[] | select(.type != "secret_text")
+               | if .name == "ORIGIN_URL" then {type:"plain_text", name:"ORIGIN_URL", text:$o} else . end ]' \
+            > "$payload_body.bindings"
+          jq -n --argjson b "$(cat "$payload_body.bindings")" '{bindings:$b}' > "$payload_body"
+          sent=$(jq -r '.bindings | length' "$payload_body")
+          secrets=$(echo "$bindings" | jq -r '[.[] | select(.type=="secret_text")] | length')
+          keep=$(echo "$bindings" | jq -r '[.[] | select(.type != "secret_text") | .name] | sort | join(",")')
+          sent_names=$(jq -r '[.bindings[].name] | sort | join(",")' "$payload_body")
+          # Two guards before any write: the payload must be non-empty (an empty
+          # bindings array would delete the plain_text variables), and it must
+          # carry exactly the non-secret names that were read (nothing dropped,
+          # nothing invented).
+          [ "$sent" != "0" ] || { rm -f "$payload_body" "$payload_body.bindings"; fail "refusing to PATCH an empty binding list"; }
+          [ "$keep" = "$sent_names" ] || { rm -f "$payload_body" "$payload_body.bindings"; fail "the rebuilt binding list does not match what was read ($keep vs $sent_names); refusing"; }
+          jq -e '.bindings | any(.name == "ORIGIN_URL")' "$payload_body" >/dev/null \
+            || { rm -f "$payload_body" "$payload_body.bindings"; fail "the rebuilt binding list lost ORIGIN_URL; refusing"; }
+          echo "writing $sent non-secret bindings ($secrets secret bindings stay untouched)"
+
+          cfapi PATCH "$settings_path" "$payload_body" >/dev/null \
+            || { rm -f "$payload_body" "$payload_body.bindings"; fail "the settings PATCH was rejected"; }
+          rm -f "$payload_body" "$payload_body.bindings"
+
+          # Read it back: the new origin is live in the config, no binding
+          # disappeared, and every secret that existed is still there.
+          after=$(cfapi GET "$settings_path") || fail "the Worker could not be re-read after the PATCH"
+          after_bindings=$(echo "$after" | jq -c '.result.bindings // []')
+          new_origin=$(echo "$after_bindings" | jq -r '[.[] | select(.name=="ORIGIN_URL") | (.text // .value // "")][0] // ""')
+          [ "$new_origin" = "$ORIGIN_URL" ] || fail "after the PATCH the Worker still serves ${new_origin:-nothing}, not $ORIGIN_URL"
+          after_keep=$(echo "$after_bindings" | jq -r '[.[] | select(.type != "secret_text") | .name] | sort | join(",")')
+          [ "$keep" = "$after_keep" ] || fail "the PATCH changed the non-secret bindings (before $keep / after $after_keep)"
+          after_secrets=$(echo "$after_bindings" | jq -r '[.[] | select(.type=="secret_text") | .name] | sort | join(",")')
+          want_secrets=$(echo "$bindings" | jq -r '[.[] | select(.type=="secret_text") | .name] | sort | join(",")')
+          [ "$want_secrets" = "$after_secrets" ] \
+            || fail "the PATCH lost a secret binding (before '$want_secrets' / after '$after_secrets')"
+          echo "edge now routes to $new_origin; secrets preserved: ${after_secrets:-none}"
+          emit edge_write wrote
+          emit new_origin "$new_origin"
+
+          # The route is a separate resource, and a Worker that lost its
+          # zone route answers nothing at all. Re-attach is not this step's job,
+          # so a missing route is reported as the blocker it is.
+          # The zone name comes from SITE_URL by stripping, in order, the
+          # scheme, the path and the port. Parameter expansion rather than a
+          # regex: a greedy character class can eat digits of the host itself
+          # when the URL carries a port.
+          host="${SITE_URL#*://}"
+          host="${host%%/*}"
+          host="${host%%\?*}"
+          host="${host%%:*}"
+          case "$host" in
+            *[!A-Za-z0-9.-]*|"") fail "cannot derive a hostname from SITE_URL for the route check" ;;
+          esac
+          zone=$(CF_QUIET=1 cfapi GET "/zones?name=$host" 2>/dev/null | jq -r '.result[0].id // empty' || true)
+          if [ -z "$zone" ]; then
+            echo "::warning::the zone for $host could not be read with these credentials, so the route attachment was not verified. Confirm $host/* still routes to $WORKER_NAME before trusting the edge."
+            emit route_verified unverified
+          else
+            attached=$(cfapi GET "/zones/$zone/routes" \
+              | jq -r --arg h "$host" --arg w "$WORKER_NAME" \
+                  '[.result[] | select(.pattern == ($h + "/*") or (.pattern | startswith($h)))
+                    | select((.script // .service // "") == $w)] | length')
+            [ "$attached" != "0" ] || fail "$host/* is no longer routed to $WORKER_NAME; re-create the route before trusting the edge."
+            echo "route check: $attached route for $host still owned by $WORKER_NAME"
+            emit route_verified yes
+          fi
+
+          echo "The public edge now points at the Railway origin."
+
+      # ---------------------------------------------------------------------
+      # The edge half of the gate, run after the cutover: the same public URLs a
+      # visitor uses, through the Worker.
+      # ---------------------------------------------------------------------
+      - name: Production gate — Cloudflare edge
+        env:
+          ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.roll.outputs.origin_url || steps.target.outputs.origin_url }}
+          EXPECTED_TAG: ${{ steps.image.outputs.tag }}
+          EDGE_WRITE: ${{ steps.edge.outputs.edge_write }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::production gate failed: $1"; exit 1; }
+
+          # The edge is the Cloudflare Worker front door. It answers once its
+          # ORIGIN_URL binding points at Railway, which the step above does; a
+          # failure here therefore names a concrete remaining gap rather than
+          # looking like an application defect.
           edge_fail=""
           settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings" || true)
           if [ -z "$settings" ]; then
@@ -756,10 +1033,16 @@ jobs:
             fi
           fi
           if [ -n "$edge_fail" ]; then
-            fail "$edge_fail — if every Railway check above passed, the remaining work is the cutover: point the open-box-gateway ORIGIN_URL binding at $ORIGIN_URL and run npx wrangler deploy (deploy/railway/README.md step 5)."
+            if [ "${EDGE_WRITE:-}" = "wrote" ]; then
+              fail "$edge_fail — the Worker was repointed at $ORIGIN_URL by the cutover step, so this is not the old Zeabur route: the Worker is live but the reply at the edge is wrong. Inspect $WORKER_NAME (its ORIGIN_URL now reads $ORIGIN_URL) and re-run in 'verify only (no write)' mode."
+            elif [ "${EDGE_WRITE:-}" = "skipped" ]; then
+              fail "$edge_fail — the edge cutover step was skipped (no Cloudflare credentials, no resolved origin, or a verify-only run). If every Railway check passed, the remaining work is to store secrets.CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL, then re-run in write mode; deploy/railway/README.md step 5 has the manual fallback."
+            else
+              fail "$edge_fail — the cutover step reported edge_write=${EDGE_WRITE:-none}. If every Railway check passed, resolve that first: deploy/railway/README.md step 5."
+            fi
           fi
 
-          echo "Production gate passed${EXPECTED_TAG:+ for $EXPECTED_TAG} on the Railway runtime."
+          echo "Production gate passed${EXPECTED_TAG:+ for $EXPECTED_TAG}: the Railway runtime serves the production database and the Cloudflare edge fronts it."
 
       - name: Report the running artifact
         if: always()
@@ -769,6 +1052,11 @@ jobs:
           ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
           DEPLOYMENT_ID: ${{ steps.roll.outputs.deployment_id }}
           CHANNEL_DIGEST_BEFORE: ${{ steps.before.outputs.channel_digest_before }}
+          EDGE_WRITE: ${{ steps.edge.outputs.edge_write }}
+          EDGE_ACCOUNT: ${{ steps.edge.outputs.account }}
+          EDGE_OLD_ORIGIN: ${{ steps.edge.outputs.old_origin }}
+          EDGE_NEW_ORIGIN: ${{ steps.edge.outputs.new_origin }}
+          EDGE_ROUTE: ${{ steps.edge.outputs.route_verified }}
         run: |
           set -uo pipefail
           after=$(curl -sS --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null \
@@ -787,18 +1075,23 @@ jobs:
             echo "- build before: \`${{ steps.before.outputs.before_version }}\` / after: \`${after}\`"
             echo "- assets before: \`${{ steps.before.outputs.before_assets }}\`"
             echo "- channel digest before this run: \`${CHANNEL_DIGEST_BEFORE:-none}\`"
+            echo "- edge: \`${EDGE_WRITE:-none}\` on \`$WORKER_NAME\` (account \`${EDGE_ACCOUNT:-none}\`), \`${EDGE_OLD_ORIGIN:-none}\` -> \`${EDGE_NEW_ORIGIN:-unchanged}\`, route: \`${EDGE_ROUTE:-not-checked}\`"
             if [ "${{ job.status }}" != "success" ] && [ -n "${CHANNEL_DIGEST_BEFORE:-}" ]; then
               echo "- rollback: re-publish the channel tag at the previous digest, then re-run in 'promote and verify' mode:"
               echo "  \`docker buildx imagetools create -t $DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG $DOCKERHUB_NAMESPACE/$IMAGE_NAME@$CHANNEL_DIGEST_BEFORE\`"
               echo "  (keep the volume mounted at \`$MOUNT_PATH\`; it holds runtime state)"
+              if [ "${EDGE_WRITE:-none}" = "wrote" ]; then
+                echo "- the edge is **not** part of that rollback: \`${EDGE_OLD_ORIGIN:-none}\` is the retired Zeabur host and does not answer, so repointing the Worker back at it restores an outage rather than a service. Roll the channel tag back and re-run; the Railway origin URL does not change between builds, so the cutover step will report \`unchanged\`."
+              fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Clear Railway credential files
+      - name: Clear Railway and Cloudflare credential files
         if: always()
         run: |
           set -uo pipefail
           rm -f /tmp/rw.token /tmp/rw.header /tmp/rw_gql.sh \
             /tmp/rw.project /tmp/rw.envs /tmp/rw.svcs /tmp/rw.svcs2 /tmp/rw.inst \
-            /tmp/rw.dom /tmp/rw.dom2 /tmp/rw.newdom /tmp/rw.vol /tmp/rw.dep /tmp/ping
-          echo "temporary Railway credential and response files removed"
+            /tmp/rw.dom /tmp/rw.dom2 /tmp/rw.newdom /tmp/rw.vol /tmp/rw.dep /tmp/ping \
+            /tmp/cf.header /tmp/cf_api.sh
+          echo "temporary Railway/Cloudflare credential and response files removed"
