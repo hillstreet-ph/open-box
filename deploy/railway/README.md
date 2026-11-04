@@ -161,6 +161,23 @@ binding, not that record, so it is a cleanup item, not a switch. Once the
 Railway service domain is stable and you own a custom domain on the service,
 point the record there and update `ORIGIN_URL` to match.
 
+**Why this deploy stays manual, and what to look at first.** The Worker is
+attached to `open-box.space` outside this repository:
+[deploy/cloudflare/wrangler.toml](../cloudflare/wrangler.toml) has no `routes`
+and no `workers_dev` key, so the file does not declare how the Worker is routed.
+Cloudflare's guidance for dashboard-managed routes is to keep the config free of
+route keys *and* set `workers_dev = false` — without that, a deploy is allowed to
+reconcile the Worker against a config that describes less than what is live, and
+since November 2025 `wrangler deploy` asks before overriding remote settings. A
+human at a terminal can answer that prompt; CI cannot, and a wrong answer here
+detaches the route from an already-down site. So before deploying, read what is
+actually configured — `npx wrangler deployments list` in that directory, plus the
+domain/route entries in the Cloudflare dashboard — record them in the file, and
+only then treat a non-interactive deploy as safe. If you want a CI path, first
+make the committed config a complete description of the live Worker, then add a
+workflow that runs with `--strict` (fails instead of prompting) and verifies the
+edge afterwards.
+
 ## 6. Verify
 
 The run itself is the verification. What the gate proves, in order: `/ping`

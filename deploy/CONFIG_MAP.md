@@ -49,7 +49,8 @@ verified and what is not.
 | Worker `open-box-gateway` | Front door + `/auth/*`; deployed by hand with `npx wrangler deploy`, there is no CI path for it |
 | Worker binding `ORIGIN_URL` | **Must become the Railway service domain** printed by runbook step 3. It still holds the retired `https://open-box-space.zeabur.app`, which is why `open-box.space` is down. |
 | Worker binding `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Auth gateway; both must belong to `huadtiuuoiriqrjpjxhr`; bind the existing matching key reference without rotating it |
-| Worker binding `AUTH_REQUIRED` | `false` until forced auth desired |
+| Worker binding `AUTH_REQUIRED` | `false` until forced auth desired; never `true` without a verified OAuth login path |
+| Worker route for `open-box.space` | Attached in the Cloudflare dashboard, not in the repo: `deploy/cloudflare/wrangler.toml` carries no `routes` and no `workers_dev` key, so the committed config describes less than what is live. **Open item:** record the live route/`workers_dev` state there before attempting any non-interactive `wrangler deploy`, because a deploy that reconciles against an incomplete config can detach the domain from an already-down site. Rationale and the pre-check are in [the runbook](railway/README.md), step 5. |
 | R2 `open-box-files` / `open-box-backups` | Object storage |
 
 ## Supabase project `open-platform` (`huadtiuuoiriqrjpjxhr`)
