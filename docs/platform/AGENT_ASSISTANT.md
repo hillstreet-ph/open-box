@@ -63,7 +63,8 @@ Supabase GitHub OAuth is a separate flow and uses the project's `/auth/v1/callba
 | ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | GitHub       | `hillstreet-ph/open-box`, `main`, PR #44                               | Repository read works; approving review and exact-head checks remain release gates                           |
 | Cloudflare   | `open-box-gateway`, zone `open-box.space`                              | Account, route, current deployment and candidate read work                                                   |
-| Zeabur       | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce` | Runtime RUNNING; new backend source still requires a verified image build                                    |
+| Railway      | Project `open-box` (`b65f4f52-404d-4dcb-be94-14a76f9d55ff`), environment `production` | Project exists and its id/environment name are bound as Actions variables; no service runs in it and `secrets.RAILWAY_TOKEN` is unset, so nothing here is verified as serving |
+| Zeabur       | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce` | Retired 2026-11-02; no longer a runtime target and its deployment workflow refuses every run |
 | Docker Hub   | `hillstreet/open-box`                                                  | Repository and latest multi-architecture digest read work; selected connector reports read=true, write=false |
 | Supabase     | `huadtiuuoiriqrjpjxhr`                                                 | Active healthy; one native `/Workspace` Local mount; shared OAuth rollout is separate                        |
 | Sentry       | `hillstreet/open-box`                                                  | Project read works; no unresolved issues in the checked 24-hour window, which does not prove SDK ingestion   |
