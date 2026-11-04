@@ -151,6 +151,14 @@ jobs:
           before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" | jq -r '.data.version // empty')
           echo "before_version=$before_version" >> "$GITHUB_OUTPUT"
           echo "reported before build: ${before_version:-none}"
+          # The served entry assets, not the build stamp, are what identifies the
+          # artifact: `data.version` is a row in the shared database that
+          # open-box-next rewrites whenever it rebuilds against production data.
+          # See issue #87.
+          before_assets=$(curl -sS --max-time 20 "$ORIGIN_URL/" 2>/dev/null \
+            | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+          echo "before_assets=$before_assets" >> "$GITHUB_OUTPUT"
+          echo "served before assets: ${before_assets:-none}"
         id: before
 
       - name: Trigger the promotion
@@ -174,6 +182,8 @@ jobs:
         env:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+          BEFORE_ASSETS: ${{ steps.before.outputs.before_assets }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
         run: |
           set -euo pipefail
           zbstate() { sed -e 's/\x1b\[[0-9;]*m//g' | awk '!seen && /^[{[]/ {seen=1} seen' \
@@ -183,22 +193,49 @@ jobs:
             state=$(npx --yes zeabur@latest deployment get --service-id "$ZEABUR_SERVICE_ID" --interactive=false --auto_check_update=false --json 2>/dev/null \
               | zbstate) || state=unknown
             serving=$(curl -fsS --max-time 15 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
-            echo "$(date -u +%H:%M:%S) deployment state: $state | serving: ${serving:-unreachable}"
+            served_assets=$(curl -sS --max-time 15 "$ORIGIN_URL/" 2>/dev/null \
+              | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+            echo "$(date -u +%H:%M:%S) deployment state: $state | stamp: ${serving:-unreachable} | assets: ${served_assets:-none}"
             case "$state" in
               FAILURE|FAILED|CRASH|CrashLoopBackOff)
                 echo "::error::deployment reported $state; inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
                 exit 1 ;;
             esac
-            if [ -n "$serving" ] && [ "$serving" != "$BEFORE_VERSION" ]; then
-              echo "The origin now reports a new build; the container rolled."
+            # A different set of served entry chunks means a different bundle is
+            # answering, which the shared build stamp cannot prove on its own.
+            if [ -n "$served_assets" ] && [ "$served_assets" != "${BEFORE_ASSETS:-}" ]; then
+              echo "The origin now serves a different frontend bundle; the container rolled."
+              exit 0
+            fi
+            if [ -z "${BEFORE_ASSETS:-}" ] && [ -n "$served_assets" ]; then
+              echo "The origin answered after serving nothing; the container rolled."
               exit 0
             fi
             case "$state" in
-              SUCCESS|READY|Succeeded|succeeded) echo "deployment reported $state"; exit 0 ;;
+              SUCCESS|READY|Succeeded|succeeded)
+                # SUCCESS can still describe the deployment that was already
+                # serving, so it only ends the wait when there is nothing named
+                # to wait for, or when that named bundle is provably at the
+                # origin. Otherwise keep polling until the deadline.
+                if [ -z "${EXPECTED_FRONTEND_ASSET:-}" ]; then
+                  if [ -n "$served_assets" ]; then
+                    echo "deployment reported $state with ${served_assets} served and no named bundle to wait for"
+                    exit 0
+                  fi
+                  echo "deployment reported $state but the origin still serves no entry asset; keep polling"
+                else
+                  case " $served_assets " in
+                    *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                      echo "deployment reported $state and the origin serves the expected $EXPECTED_FRONTEND_ASSET"
+                      exit 0 ;;
+                    *)
+                      echo "deployment reported $state but $EXPECTED_FRONTEND_ASSET is not served yet (serving ${served_assets:-nothing}); keep polling" ;;
+                  esac
+                fi ;;
             esac
             sleep 20
           done
-          echo "::error::neither the deployment API nor the reported build stamp confirmed a rollout within 15 minutes."
+          echo "::error::the origin never served a frontend bundle that differs from the pre-promotion one within 15 minutes."
           echo "Inspect with: zeabur deployment log --service-id $ZEABUR_SERVICE_ID"
           exit 1
 
@@ -206,6 +243,7 @@ jobs:
         env:
           EXPECTED_TAG: ${{ steps.image.outputs.tag }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+          BEFORE_ASSETS: ${{ steps.before.outputs.before_assets }}
           EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
           VERIFY_ONLY: ${{ inputs.mode == 'verify only (no write)' && 'true' || 'false' }}
         run: |
@@ -241,12 +279,31 @@ jobs:
           settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings")
           echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null || fail "public settings payload is empty"
           version=$(echo "$settings" | jq -r '.data.version // empty')
-          echo "serving version: $version"
+          echo "serving version stamp: ${version:-none} (recorded only — open-box-next rewrites this shared row, so it cannot identify a promotion)"
+          # Rollout identity comes from what the origin serves, not from that row.
+          served=$(curl -sS --max-time 20 "$ORIGIN_URL/" 2>/dev/null \
+            | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+          echo "origin entry assets: ${served:-none}"
           if [ "$VERIFY_ONLY" = "true" ]; then
-            [ -n "$version" ] || fail "the origin reports no build stamp"
-            echo "verify-only run: the build stamp is recorded, not compared ($version)"
+            [ -n "$served" ] || fail "the origin serves no frontend entry asset"
+            echo "verify-only run: served assets recorded, not compared ($served)"
           else
-            [ "$version" != "$BEFORE_VERSION" ] || fail "the reported build stamp did not change; the promotion did not roll the container"
+            [ -n "$served" ] || fail "the origin serves no frontend entry asset; the promoted container is not answering"
+            if [ -n "$BEFORE_ASSETS" ] && [ "$served" = "$BEFORE_ASSETS" ]; then
+              # Unchanged bytes are only a verdict when a named build can settle
+              # it: a backend-only promotion legitimately re-serves the same
+              # frontend bundle, so failing here would block honest work.
+              if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+                case " $served " in
+                  *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                    echo "::warning::the served bundle is unchanged and already is $EXPECTED_FRONTEND_ASSET — this run proves the frontend identity but not a container roll." ;;
+                  *)
+                    fail "the origin still serves the pre-promotion bundle ($served) instead of $EXPECTED_FRONTEND_ASSET; the promotion did not roll the container" ;;
+                esac
+              else
+                echo "::warning::the served bundle is unchanged ($served) and no expected_frontend_asset was supplied, so assets alone cannot prove a roll. Re-dispatch with the entry chunk name to make this a hard check."
+              fi
+            fi
           fi
 
           # Anonymous listing proves the storage driver and mount table read back.
@@ -265,13 +322,15 @@ jobs:
           if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
             # index.html references the legacy and the modern entry chunk, in that
             # order, so the expected build must be found among all served assets.
-            served=$(curl -sS --max-time 20 "$SITE_URL/" \
-              | grep -oE "/assets/index[A-Za-z0-9._-]*\\.js" | sort -u | paste -sd' ' - || true)
-            echo "served entry assets: ${served:-none}"
-            case " $served " in
+            edge_assets=$(curl -sS --max-time 20 "$SITE_URL/" \
+              | grep -oE "/assets/index[A-Za-z0-9._-]*\.js" | sort -u | paste -sd' ' - || true)
+            echo "served entry assets: ${edge_assets:-none}"
+            case " $edge_assets " in
               *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*) echo "frontend identity matches the expected build" ;;
               *) fail "served frontend assets do not include $EXPECTED_FRONTEND_ASSET" ;;
             esac
+          elif [ "$VERIFY_ONLY" = "false" ]; then
+            echo "::warning::expected_frontend_asset was left empty, so the served bundle was compared to the pre-promotion one but not to a named build."
           fi
 
           echo "Production gate passed for $EXPECTED_TAG."
@@ -291,6 +350,7 @@ jobs:
             echo "- digest: \`${{ steps.image.outputs.digest }}\`"
             echo "- build before: \`${{ steps.before.outputs.before_version }}\`"
             echo "- build after: \`${after}\`"
+            echo "- assets before: \`${{ steps.before.outputs.before_assets }}\`"
             echo "- service: \`${{ vars.ZEABUR_PROJECT_ID }}\` / \`${ZEABUR_SERVICE_ID}\`"
             if [ "${{ job.status }}" != "success" ]; then
               echo "- rollback: \`zeabur service update tag --id $ZEABUR_SERVICE_ID --tag <previous tag> --yes\` (volume \`open-box-data\` must be kept)"
