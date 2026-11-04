@@ -183,6 +183,7 @@ jobs:
           ZEABUR_SERVICE_ID: ${{ vars.ZEABUR_SERVICE_ID }}
           BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
           BEFORE_ASSETS: ${{ steps.before.outputs.before_assets }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
         run: |
           set -euo pipefail
           zbstate() { sed -e 's/\x1b\[[0-9;]*m//g' | awk '!seen && /^[{[]/ {seen=1} seen' \
@@ -212,11 +213,25 @@ jobs:
             fi
             case "$state" in
               SUCCESS|READY|Succeeded|succeeded)
-                if [ -n "$served_assets" ]; then
-                  echo "deployment reported $state with ${served_assets} served"
-                  exit 0
-                fi
-                echo "deployment reported $state but the origin still serves no entry asset; keep polling" ;;
+                # SUCCESS can still describe the deployment that was already
+                # serving, so it only ends the wait when there is nothing named
+                # to wait for, or when that named bundle is provably at the
+                # origin. Otherwise keep polling until the deadline.
+                if [ -z "${EXPECTED_FRONTEND_ASSET:-}" ]; then
+                  if [ -n "$served_assets" ]; then
+                    echo "deployment reported $state with ${served_assets} served and no named bundle to wait for"
+                    exit 0
+                  fi
+                  echo "deployment reported $state but the origin still serves no entry asset; keep polling"
+                else
+                  case " $served_assets " in
+                    *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                      echo "deployment reported $state and the origin serves the expected $EXPECTED_FRONTEND_ASSET"
+                      exit 0 ;;
+                    *)
+                      echo "deployment reported $state but $EXPECTED_FRONTEND_ASSET is not served yet (serving ${served_assets:-nothing}); keep polling" ;;
+                  esac
+                fi ;;
             esac
             sleep 20
           done
@@ -275,7 +290,19 @@ jobs:
           else
             [ -n "$served" ] || fail "the origin serves no frontend entry asset; the promoted container is not answering"
             if [ -n "$BEFORE_ASSETS" ] && [ "$served" = "$BEFORE_ASSETS" ]; then
-              fail "the origin still serves the pre-promotion bundle ($served); the promotion did not roll the container"
+              # Unchanged bytes are only a verdict when a named build can settle
+              # it: a backend-only promotion legitimately re-serves the same
+              # frontend bundle, so failing here would block honest work.
+              if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+                case " $served " in
+                  *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                    echo "::warning::the served bundle is unchanged and already is $EXPECTED_FRONTEND_ASSET — this run proves the frontend identity but not a container roll." ;;
+                  *)
+                    fail "the origin still serves the pre-promotion bundle ($served) instead of $EXPECTED_FRONTEND_ASSET; the promotion did not roll the container" ;;
+                esac
+              else
+                echo "::warning::the served bundle is unchanged ($served) and no expected_frontend_asset was supplied, so assets alone cannot prove a roll. Re-dispatch with the entry chunk name to make this a hard check."
+              fi
             fi
           fi
 
