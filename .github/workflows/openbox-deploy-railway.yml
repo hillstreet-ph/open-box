@@ -137,6 +137,24 @@ jobs:
               echo "ok: $1"
             fi
           }
+          # Some repository values reach a request body or a Docker Hub URL by
+          # string concatenation, so each one is checked against the shape it is
+          # allowed to have before anything is built from it. This mirrors the
+          # image_tag check below: a repository variable is never trusted to be
+          # well-formed, because a stray quote or slash in one silently changes
+          # the query or the path rather than failing loudly.
+          strict_shape() { # <name> <value> <allowed characters>
+            local v="${2:-}"
+            if [ -z "$v" ]; then
+              echo "::error::$1 is empty."
+              missing=1
+            elif [ "$v" != "$(printf '%s' "$v" | tr -dc "$3")" ] || [ "${#v}" -gt 128 ]; then
+              echo "::error::$1 must contain only [$3] (no quotes, slashes or spaces); refusing before any request is built."
+              missing=1
+            else
+              echo "ok: $1"
+            fi
+          }
           require "secrets.RAILWAY_TOKEN" "$RAILWAY_TOKEN" "Create the Railway token, then store it from your own terminal: gh secret set RAILWAY_TOKEN --repo hillstreet-ph/open-box (piped over stdin, never pasted into chat)."
           require "vars.RAILWAY_PROJECT_ID" "$PROJECT_ID" "Create the Railway project first, then: gh variable set RAILWAY_PROJECT_ID --body <project-id> --repo hillstreet-ph/open-box."
           require "secrets.SUPABASE_DB_URL" "$DB_DSN" "The service needs the scoped database DSN to boot on Postgres."
@@ -148,6 +166,9 @@ jobs:
             echo "::error::RAILWAY_PROJECT_ID holds the retired Zeabur project id; refusing."
             exit 1
           fi
+          strict_shape "vars.RAILWAY_PROJECT_ID" "$PROJECT_ID" 'A-Za-z0-9._-'
+          strict_shape "vars.DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" 'A-Za-z0-9._-'
+          strict_shape "vars.RAILWAY_CHANNEL_TAG" "$CHANNEL_TAG" 'A-Za-z0-9._+-'
           [ "$missing" = "0" ] || exit 1
           echo "Project $PROJECT_ID / environment $ENVIRONMENT_NAME / service $SERVICE_NAME, channel tag $CHANNEL_TAG."
 
@@ -235,7 +256,7 @@ jobs:
           # Project name is asserted before anything else: this is the Railway
           # equivalent of the retired-project guard, and it stops a stale
           # RAILWAY_PROJECT_ID from pointing at a different workload.
-          gql 'query($id:ID!){project(id:$id){id name}}' "{\"id\":\"$PROJECT_ID\"}" > /tmp/rw.project
+          gql 'query($id:ID!){project(id:$id){id name}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.project
           pname=$(jq -r '.data.project.name // empty' /tmp/rw.project)
           if [ -z "$pname" ]; then
             echo "::error::project $PROJECT_ID did not resolve. Check vars.RAILWAY_PROJECT_ID and the token scope."
@@ -248,7 +269,7 @@ jobs:
           fi
 
           # Environment id by name (Production is the default in a fresh project).
-          gql 'query($id:ID!){project(id:$id){environments(first:20){edges{node{id name}}}}}' "{\"id\":\"$PROJECT_ID\"}" > /tmp/rw.envs
+          gql 'query($id:ID!){project(id:$id){environments(first:20){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.envs
           env_id=$(jq -r --arg n "$ENVIRONMENT_NAME" '.data.project.environments.edges[].node | select(.name==$n) | .id' /tmp/rw.envs | head -1)
           if [ -z "$env_id" ]; then
             echo "environments present: $(jq -r '[.data.project.environments.edges[].node.name] | join(", ")' /tmp/rw.envs)"
@@ -258,7 +279,7 @@ jobs:
           echo "environment: $ENVIRONMENT_NAME ($env_id)"
 
           # Service id by name.
-          gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "{\"id\":\"$PROJECT_ID\"}" > /tmp/rw.svcs
+          gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs
           svc_id=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs | head -1)
           echo "services present: $(jq -r '[.data.project.services.edges[].node.name] | join(", ")' /tmp/rw.svcs)"
           domain=""
@@ -403,7 +424,7 @@ jobs:
               --arg img "$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG" \
               '{input:{projectId:$p, environmentId:$e, name:$n, source:{image:$img}}}')
             gql 'mutation($input:ServiceCreateInput!){serviceCreate(input:$input)}' "$vars" > /dev/null
-            gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "{\"id\":\"$PROJECT_ID\"}" > /tmp/rw.svcs2
+            gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs2
             SERVICE_ID=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs2 | head -1)
             if [ -z "$SERVICE_ID" ]; then echo "::error::serviceCreate returned no resolvable service named $SERVICE_NAME"; exit 1; fi
             echo "created service $SERVICE_NAME ($SERVICE_ID)"

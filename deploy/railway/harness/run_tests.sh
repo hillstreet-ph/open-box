@@ -387,6 +387,21 @@ if [ "$RC" != 0 ] && has 'retired Zeabur project id'; then
   ok "T19 the retired Zeabur identifier is still refused"
 else ko "T19 retired id" "$(show)"; fi
 
+# T19b — a repository variable shaped like JSON/shell metacharacters is refused
+#           before any request body is built (the ids are concatenated into GraphQL
+#           variables and Docker Hub URLs, so their shape is the boundary).
+run_step "$BIN" RAILWAY_TOKEN=t PROJECT_ID='a","x":"y' DB_DSN=d \
+  DOCKERHUB_USERNAME=u DOCKERHUB_TOKEN=t
+if [ "$RC" != 0 ] && has 'RAILWAY_PROJECT_ID must contain only'; then
+  ok "T19b a malformed project id is refused before any request is built"
+else ko "T19b project id shape" "$(show)"; fi
+
+run_step "$BIN" RAILWAY_TOKEN=t PROJECT_ID=prj-ok DB_DSN=d CHANNEL_TAG='bad/tag' \
+  DOCKERHUB_USERNAME=u DOCKERHUB_NAMESPACE=u DOCKERHUB_TOKEN=t
+if [ "$RC" != 0 ] && has 'RAILWAY_CHANNEL_TAG must contain only'; then
+  ok "T19c a channel tag with a slash is refused (it would change the registry URL)"
+else ko "T19c channel tag shape" "$(show)"; fi
+
 # T20 — rotation attestation gates a write run
 run_step "$RTO" ROTATE_CONFIRMED="no — stop"
 if [ "$RC" != 0 ] && has 'rotating the previously exposed management tokens'; then
