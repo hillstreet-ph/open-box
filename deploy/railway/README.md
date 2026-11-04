@@ -203,7 +203,19 @@ replaces the `ORIGIN_URL` binding alone, and reads everything back:
   back, so any flow that restated the binding list from the repository config
   would destroy it;
 * zone routes are a separate resource, and the step re-reads `open-box.space/*`
-  afterwards to prove it still belongs to `open-box-gateway`.
+  afterwards to prove it still belongs to `open-box-gateway`;
+* the credential's **header form is negotiated, not assumed**. `CLOUDFLARE_API_KEY`
+  has never been exercised from CI, and its name fits two different things: a
+  Global API Key travels as HTTP Basic (`email:key`) or as the legacy
+  `X-Auth-Email`/`X-Auth-Key` pair, and an API token travels as Basic. The step
+  writes both header files under `umask 077`, calls `GET /accounts` with each,
+  and uses whichever authenticates — recording `auth_form=basic|legacy` in the
+  step outputs. If neither does, it fails before any write and names the two
+  secrets to check, rather than reporting a rejected cutover three calls later.
+
+`edge_write` is recorded as `wrote` the moment the PATCH succeeds, before the
+read-back guards — so a run that writes and then fails a guard reports that the
+edge moved, not that it was skipped.
 
 It needs `secrets.CLOUDFLARE_API_KEY` and `secrets.CLOUDFLARE_EMAIL`, which this
 repository already has. Without them the step says `edge_write=skipped` and the
@@ -279,7 +291,7 @@ workflow rather than about a copy of it:
 bash deploy/railway/harness/run_tests.sh
 ```
 
-Forty-seven assertions cover channel-digest equality in both directions, the
+Forty-nine assertions cover channel-digest equality in both directions, the
 retired-id refusal, the rotation attestation gate and its verify-only exemption,
 bindings reporting without value leakage, the malformed-binding refusals (a
 project id carrying JSON metacharacters, a channel tag carrying a slash),
@@ -293,6 +305,10 @@ other `plain_text` bindings survive; that an already-correct origin issues no
 PATCH; that `verify only` writes nothing; that a missing or secret-shaped
 `ORIGIN_URL` binding is refused rather than guessed; that account ownership is
 probed when nothing is configured; that a rejected PATCH, a detached zone route
-and an unreadable zone each produce their own honest outcome; and that no key
-value reaches a log. It needs `python3`,
+and an unreadable zone each produce their own honest outcome; that the step
+negotiates which credential form the secret actually holds instead of assuming
+one (Basic rejected once, the legacy pair used for every call after it; both
+rejected means no write at all); and that no credential reaches a log in any
+form — including its base64 encoding, which is what a Basic header actually is.
+It needs `python3`,
 `ruby` (for the YAML extraction) and `jq`.

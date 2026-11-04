@@ -14,8 +14,10 @@ against the real API on a scratch Worker:
 
 State lives in the JSON file named by CF_MOCK_STATE so a PATCH and the later
 read agree, exactly like the real service. Behaviour is chosen by
-CF_MOCK_PROFILE. Every request's Authorization header is appended to CF_MOCK_LOG
-so the harness can prove the bearer was sent and never leaked.
+CF_MOCK_PROFILE and the accepted credential form by CF_MOCK_AUTH. Each request
+appends its method, path and auth *form* to CF_MOCK_LOG — never the credential
+value, not even base64-encoded, because a log line that can be decoded back to
+a key is a leak with extra steps.
 """
 import json
 import os
@@ -26,6 +28,28 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 STATE = os.environ["CF_MOCK_STATE"]
 PROFILE = os.environ.get("CF_MOCK_PROFILE", "existing")
 LOG = os.environ.get("CF_MOCK_LOG", "/tmp/cfh/requests.log")
+# Which credential form the mock will accept: "any" (default), "basic",
+# "legacy" or "none". The real API takes a Global API Key as HTTP Basic
+# (email:key) *or* as the legacy X-Auth-Email/X-Auth-Key pair, and an API token
+# as Basic, and the workflow cannot know which one the secret holds — so it
+# probes. This is what lets the harness force each answer.
+AUTH = os.environ.get("CF_MOCK_AUTH", "any")
+
+
+def auth_form(headers):
+    """Classify a request's credential form without ever returning its value."""
+    if (headers.get("Authorization") or "").startswith("Basic "):
+        return "basic"
+    if headers.get("X-Auth-Key") and headers.get("X-Auth-Email"):
+        return "legacy"
+    return "none"
+
+
+def auth_ok(headers):
+    form = auth_form(headers)
+    if form == "none" or AUTH == "none":
+        return False
+    return AUTH == "any" or AUTH == form
 
 
 def load():
@@ -95,8 +119,11 @@ class H(BaseHTTPRequestHandler):
         st = load()
         path = self.path.split("?", 1)[0]
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        form = auth_form(self.headers)
         with open(LOG, "a") as fh:
-            fh.write("GET %s %s\n" % (path, self.headers.get("Authorization", "<missing>")))
+            fh.write("GET %s auth=%s\n" % (path, form))
+        if not auth_ok(self.headers):
+            return self._send(*failure(9106, "Unknown Cloudflare credential", 400))
 
         # ---- accounts ------------------------------------------------------
         if path == "/client/v4/accounts":
@@ -137,7 +164,9 @@ class H(BaseHTTPRequestHandler):
     def do_PATCH(self):
         st = load()
         with open(LOG, "a") as fh:
-            fh.write("PATCH %s %s\n" % (self.path, self.headers.get("Authorization", "<missing>")))
+            fh.write("PATCH %s auth=%s\n" % (self.path, auth_form(self.headers)))
+        if not auth_ok(self.headers):
+            return self._send(*failure(9106, "Unknown Cloudflare credential", 400))
         m = re.match(r"^/client/v4/accounts/([^/]+)/workers/scripts/([^/]+)/settings$", self.path)
         if not m:
             return self._send(*failure(7000, "unknown path " + self.path, 404))
@@ -165,7 +194,6 @@ class H(BaseHTTPRequestHandler):
         # secrets omitted from the payload are preserved, everything else is
         # replaced wholesale — this is the measured real behaviour.
         kept_secrets = [b for b in w["bindings"] if b.get("type") == "secret_text"]
-        secret_names = {b["name"] for b in kept_secrets}
         submitted = new["bindings"]
         if any(b.get("type") == "secret_text" for b in submitted):
             return self._send(*failure(10079, "secret_text values cannot be written through the settings endpoint", 400))

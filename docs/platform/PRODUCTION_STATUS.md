@@ -557,7 +557,7 @@ Three levels, in increasing strength:
 2. Every extracted `run:` body passes `bash -n`.
 3. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
    the YAML and executes them against a mock Railway GraphQL API, a mock
-   Open-Box origin and a mock Cloudflare edge — 47 assertions, all passing.
+   Open-Box origin and a mock Cloudflare edge — 49 assertions, all passing.
    Running shipped code rather than a transcription is the point; three of the
    harness's early failures were harness bugs (an unset redirection, a
    non-mutating `gsub`, a `GET /ping` readiness probe against a POST-only mock),
@@ -607,9 +607,23 @@ something other than `plain_text`, because then the fix is a dashboard edit and
 not a rewrite. After writing it re-reads the bindings and asserts the secret count
 and binding-name set are unchanged before it will call the cutover done, and it
 re-reads the zone route — a detached route after a write is a hard failure, an
-unreadable zone is a `route_verified=unverified` warning. Harness tests T26–T40
-cover each of those branches, including that the token pair is never printed and
-appears only in a `0600` header file that the cleanup step deletes.
+unreadable zone is a `route_verified=unverified` warning. Harness tests T26–T42
+cover each of those branches. One thing the mock could not settle was the
+transport credential: `secrets.CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` have
+never been used by any CI run in this repository's history (a `git log -S` over
+every workflow, script and doc finds no prior Cloudflare API call), and the
+scratch-Worker measurements were made through an authenticated Cloudflare MCP
+session, not through that pair. So the step does not assume a header form — it
+writes both candidates under `umask 077`, probes `GET /accounts` with each, and
+runs on whichever authenticates, failing before any write if neither does. The
+mock models each answer (`CF_MOCK_AUTH=any|basic|legacy|none`) and T41/T42
+pin the fallback and the double rejection. The credential form itself stays
+unverified until the first real run says so, which is the honest position: the
+alternative was to hardcode Basic and discover the problem on a site that is
+already down.
+`edge_write` is now emitted the moment the PATCH
+succeeds rather than after the read-back guards, so a run that writes and then
+fails a guard cannot be described as one that skipped the cutover.
 
 One premise in the earlier design was wrong and is corrected here: Railway's
 `ServiceInstanceUpdateInput` *does* expose `source :: ServiceSourceInput`, so a

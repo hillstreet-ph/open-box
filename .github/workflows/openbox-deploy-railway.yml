@@ -116,7 +116,8 @@ jobs:
       ORIGIN_OVERRIDE: ${{ vars.RAILWAY_ORIGIN_URL }}
       RETIRED_ZEABUR_PROJECT_ID: ymhiwerqyegvondndkjn
       CLOUDFLARE_API: ${{ vars.CLOUDFLARE_API_ROOT || 'https://api.cloudflare.com/client/v4' }}
-      CLOUDFLARE_HEADER: /tmp/cf.header
+      CLOUDFLARE_HEADER_BASIC: /tmp/cf.basic.header
+      CLOUDFLARE_HEADER_LEGACY: /tmp/cf.legacy.header
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       WORKER_NAME: ${{ vars.CLOUDFLARE_WORKER_NAME || 'open-box-gateway' }}
       MODE: ${{ inputs.mode }}
@@ -796,14 +797,22 @@ jobs:
             exit 0
           fi
 
-          # The token pair becomes a Basic header exactly once, under umask 077,
-          # written by a builtin printf, and every call reads it with -H @file.
-          # No key value is ever interpolated into a script body or a command
-          # line, and the always-run cleanup step deletes the file.
+          # The credentials become a header exactly once, under umask 077, written
+          # by a builtin printf, and every call reads one of these files with
+          # -H @file. No key value is ever interpolated into a script body or a
+          # command line, and the always-run cleanup step deletes both files.
+          #
+          # Two candidate files, not one, because the repository has never called
+          # the Cloudflare API from CI and cannot know which credential the secret
+          # actually holds: a Global API Key travels as HTTP Basic (email:key) or
+          # as the legacy X-Auth-Email/X-Auth-Key pair, and an API token travels
+          # as Basic too. The block below picks empirically instead of asserting.
           umask 077
           basic=$(printf '%s:%s' "$CLOUDFLARE_EMAIL" "$CLOUDFLARE_API_KEY" | base64 | tr -d '\n')
-          printf 'Authorization: Basic %s\n' "$basic" > "$CLOUDFLARE_HEADER"
-          chmod 600 "$CLOUDFLARE_HEADER"
+          printf 'Authorization: Basic %s\n' "$basic" > "$CLOUDFLARE_HEADER_BASIC"
+          printf 'X-Auth-Email: %s\nX-Auth-Key: %s\n' "$CLOUDFLARE_EMAIL" "$CLOUDFLARE_API_KEY" \
+            > "$CLOUDFLARE_HEADER_LEGACY"
+          chmod 600 "$CLOUDFLARE_HEADER_BASIC" "$CLOUDFLARE_HEADER_LEGACY"
           unset basic
 
           # One helper for every call, shaped like the GraphQL one: the response
@@ -818,12 +827,12 @@ jobs:
               # multipart: curl sets the boundary itself, so no Content-Type is
               # forced here — the real API answers 10001 for anything else.
               curl -sS --max-time "${CF_TIMEOUT:-30}" -X PATCH "${CLOUDFLARE_API}${path}" \
-                -H "@${CLOUDFLARE_HEADER:-/tmp/cf.header}" \
+                -H "@${CLOUDFLARE_HEADER:?auth header was never negotiated}" \
                 -F "settings=@${body};type=${ctype}" > "$f" 2>/dev/null
               rc=$?
             else
               curl -sS --max-time "${CF_TIMEOUT:-30}" -X "$method" "${CLOUDFLARE_API}${path}" \
-                -H "@${CLOUDFLARE_HEADER:-/tmp/cf.header}" > "$f" 2>/dev/null
+                -H "@${CLOUDFLARE_HEADER:?auth header was never negotiated}" > "$f" 2>/dev/null
               rc=$?
             fi
             if [ "$rc" != 0 ]; then
@@ -847,6 +856,30 @@ jobs:
           CFEOF
           . /tmp/cf_api.sh
 
+          # Which header do these credentials speak? /accounts is the one call
+          # both a Global API Key and an API token can answer, and it is needed
+          # anyway for account discovery, so it decides once and the result is
+          # reused. A wrong guess here would otherwise surface as a rejected
+          # write in the middle of a cutover.
+          account_list=''
+          auth_ok=''
+          for candidate in basic legacy; do
+            if [ "$candidate" = "basic" ]; then
+              CLOUDFLARE_HEADER="$CLOUDFLARE_HEADER_BASIC"
+            else
+              CLOUDFLARE_HEADER="$CLOUDFLARE_HEADER_LEGACY"
+            fi
+            if account_list=$(CF_QUIET=1 cfapi GET '/accounts' 2>/dev/null \
+              | jq -c '[.result[]? | {id}]' 2>/dev/null) && [ -n "$account_list" ]; then
+              auth_ok="$candidate"
+              break
+            fi
+            echo "note: the $candidate Cloudflare auth header was rejected; trying the other form" >&2
+          done
+          [ -n "$auth_ok" ] || fail "neither HTTP Basic (email:key) nor X-Auth-Email/X-Auth-Key authenticated against ${CLOUDFLARE_API}. secrets.CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY are the only inputs; confirm they are a live Global API Key pair, or an API token in the key slot, with Account.Accounts:Read."
+          echo "auth: the $auth_ok header form authenticated"
+          emit auth_form "$auth_ok"
+
           # Which account owns the Worker? An explicit binding wins; otherwise
           # every account the credentials can see is probed, so a key scoped to
           # several accounts cannot silently rewrite the wrong one.
@@ -854,7 +887,7 @@ jobs:
           if [ -n "$account" ]; then
             echo "account from vars.CLOUDFLARE_ACCOUNT_ID: $account"
           else
-            ids=$(cfapi GET '/accounts' | jq -r '.result[].id // empty' | tr '\n' ' ')
+            ids=$(echo "$account_list" | jq -r '.[].id // empty' | tr '\n' ' ')
             [ -n "${ids// /}" ] || fail "the credentials can see no Cloudflare accounts"
             echo "candidate accounts: $(echo "$ids" | wc -w | tr -d ' ')"
             for a in $ids; do
@@ -936,6 +969,12 @@ jobs:
           cfapi PATCH "$settings_path" "$payload_body" >/dev/null \
             || { rm -f "$payload_body" "$payload_body.bindings"; fail "the settings PATCH was rejected"; }
           rm -f "$payload_body" "$payload_body.bindings"
+          # Recorded the moment the write succeeds, before the read-back guards.
+          # Any of those can still fail, and when one does the write has already
+          # happened — an output that stays unset would make the report and the
+          # failure text describe a cutover that did take place as though it had
+          # been skipped.
+          emit edge_write wrote
 
           # Read it back: the new origin is live in the config, no binding
           # disappeared, and every secret that existed is still there.
@@ -950,7 +989,6 @@ jobs:
           [ "$want_secrets" = "$after_secrets" ] \
             || fail "the PATCH lost a secret binding (before '$want_secrets' / after '$after_secrets')"
           echo "edge now routes to $new_origin; secrets preserved: ${after_secrets:-none}"
-          emit edge_write wrote
           emit new_origin "$new_origin"
 
           # The route is a separate resource, and a Worker that lost its
@@ -1094,4 +1132,7 @@ jobs:
             /tmp/rw.project /tmp/rw.envs /tmp/rw.svcs /tmp/rw.svcs2 /tmp/rw.inst \
             /tmp/rw.dom /tmp/rw.dom2 /tmp/rw.newdom /tmp/rw.vol /tmp/rw.dep /tmp/ping \
             /tmp/cf.header /tmp/cf_api.sh
+          # Both candidate Cloudflare auth headers, whichever one was chosen.
+          rm -f "${CLOUDFLARE_HEADER_BASIC:-/tmp/cf.basic.header}" \
+            "${CLOUDFLARE_HEADER_LEGACY:-/tmp/cf.legacy.header}"
           echo "temporary Railway/Cloudflare credential and response files removed"

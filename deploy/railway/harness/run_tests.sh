@@ -153,7 +153,10 @@ start_cloudflare() {
   python3 "$HERE/mock_cloudflare.py" "$CF" >/dev/null 2>&1 &
   port_up "$CF" || { echo "harness: mock Cloudflare did not start"; exit 1; }
 }
-use_cf_profile() { export CF_MOCK_PROFILE="$1"; start_cloudflare; }
+use_cf_profile() { # profile [accepted-auth-form]
+  export CF_MOCK_PROFILE="$1" CF_MOCK_AUTH="${2:-any}"
+  start_cloudflare
+}
 # the mock fixes its profile at process start, so every profile change restarts
 use_profile() { export RW_MOCK_PROFILE="$1"; start_railway; }
 start_origin() { # port  KEY=value ...
@@ -204,7 +207,8 @@ run_step() { # file [VAR=val ...]
     PROJECT_ID=prj-openbox EXPECTED_PROJECT_NAME=open-box \
     ENVIRONMENT_NAME=Production SERVICE_NAME=open-box MOUNT_PATH=/opt/openlist/data \
     ORIGIN_OVERRIDE="" RETIRED_ZEABUR_PROJECT_ID=ymhiwerqyegvondndkjn \
-    CLOUDFLARE_API="http://127.0.0.1:$CF/client/v4" CLOUDFLARE_HEADER=/tmp/cf.header \
+    CLOUDFLARE_API="http://127.0.0.1:$CF/client/v4" \
+    CLOUDFLARE_HEADER_BASIC=/tmp/cf.basic.header CLOUDFLARE_HEADER_LEGACY=/tmp/cf.legacy.header \
     CLOUDFLARE_API_KEY=cfkey CLOUDFLARE_EMAIL=cf@example.com \
     CLOUDFLARE_ACCOUNT_ID=acc-hillstreet CF_TIMEOUT=5 VERIFY_ONLY=false \
     WORKER_NAME=open-box-gateway \
@@ -559,7 +563,7 @@ edge_run() { # [extra env]
 # T26 — the cutover rewrites ORIGIN_URL and nothing else
 reset_cf; use_cf_profile existing
 edge_run
-mode=$(python3 -c 'import os,sys;print(oct(os.stat("/tmp/cf.header").st_mode & 0o777))')
+mode=$(python3 -c 'import os,sys;print(oct(os.stat("/tmp/cf.basic.header").st_mode & 0o777))')
 b_names=$(cf_bindings open-box-gateway | python3 -c 'import json,sys;print(",".join(sorted(b["name"] for b in json.loads(sys.stdin.read()))))')
 secret_type=$(cf_binding open-box-gateway AI_CONFIG_KEY type)
 new_origin=$(cf_binding open-box-gateway ORIGIN_URL text)
@@ -647,14 +651,16 @@ if [ "$RC" = 0 ] && grep -q '^edge_write=wrote$' out.txt && grep -q '^route_veri
   ok "T36 an unreadable zone records the unverified route as a warning instead of claiming success"
 else ko "T36 zone unreadable" "$(show)"; fi
 
-# T37 — the Basic header is sent on every call and the key never reaches a log
+# T37 — a header is sent on every call and no credential form reaches a log
 reset_cf; use_cf_profile existing
 edge_run
-sent=$(grep -c 'Basic ' cf_reqs.log || true)
+sent=$(grep -c 'auth=basic' cf_reqs.log || true)
+b64=$(printf 'cf@example.com:cfkey' | base64 | tr -d '\n')
 if [ "$RC" = 0 ] && [ "$sent" -ge 3 ] && hasnt 'cfkey' && hasnt 'cf@example.com' \
-   && ! grep -qs 'cfkey' cf_reqs.log && ! grep -qs 'Bearer' cf_reqs.log; then
-  ok "T37 every Cloudflare call carries the Basic header from the 0600 file and no key value is logged"
-else ko "T37 credential hygiene" "rc=$RC sent=$sent $(show)"; fi
+   && ! grep -qs 'cfkey' cf_reqs.log && ! grep -qs 'Bearer' cf_reqs.log \
+   && ! grep -qs "$b64" cf_reqs.log && ! grep -qs "$b64" stdout.txt stderr.txt; then
+  ok "T37 every Cloudflare call carries the negotiated header from the 0600 file, and neither the key nor its base64 form is logged"
+else ko "T37 credential hygiene" "rc=$RC sent=$sent b64_in_log=$(grep -c "$b64" cf_reqs.log || true) $(show)"; fi
 
 # T38 — the edge gate names the write it just performed when the edge still fails
 reset_cf; use_cf_profile existing
@@ -684,12 +690,36 @@ if [ "$RC" = 0 ] && grep -q 'edge: .wrote. on .open-box-gateway.' summary.md \
   ok "T39 the report records the edge write and explains why the edge is not part of the rollback"
 else ko "T39 report edge line" "rc=$RC summary=$(head -12 summary.md | tr '\n' '|')"; fi
 
-# T40 — the cleanup step also deletes the Cloudflare header
+# T40 — the cleanup step also deletes the Cloudflare headers
 printf 'z\n' > /tmp/cf.header; printf 'w\n' > /tmp/cf_api.sh
+printf 'z\n' > /tmp/cf.basic.header; printf 'z\n' > /tmp/cf.legacy.header
 run_step "$CLN"
-if [ "$RC" = 0 ] && [ ! -e /tmp/cf.header ] && [ ! -e /tmp/cf_api.sh ]; then
-  ok "T40 the always-run cleanup deletes the Cloudflare credential file too"
-else ko "T40 cleanup cf" "rc=$RC cf.header=$([ -e /tmp/cf.header ] && echo present || echo gone)"; fi
+if [ "$RC" = 0 ] && [ ! -e /tmp/cf.header ] && [ ! -e /tmp/cf_api.sh ] \
+   && [ ! -e /tmp/cf.basic.header ] && [ ! -e /tmp/cf.legacy.header ]; then
+  ok "T40 the always-run cleanup deletes every Cloudflare credential file, chosen or not"
+else ko "T40 cleanup cf" "rc=$RC cf.header=$([ -e /tmp/cf.header ] && echo present || echo gone) basic=$([ -e /tmp/cf.basic.header ] && echo present || echo gone) legacy=$([ -e /tmp/cf.legacy.header ] && echo present || echo gone)"; fi
+
+# T41 — a Global API Key that only answers the legacy headers still cuts over
+reset_cf; use_cf_profile existing legacy
+edge_run
+new_origin41=$(cf_binding open-box-gateway ORIGIN_URL text)
+n_basic=$(grep -c 'auth=basic' cf_reqs.log || true)
+n_legacy=$(grep -c 'auth=legacy' cf_reqs.log || true)
+if [ "$RC" = 0 ] && [ "$new_origin41" = "$EDGE_URL" ] \
+   && grep -q '^auth_form=legacy$' out.txt \
+   && [ "$n_basic" = "1" ] && [ "$n_legacy" -ge 3 ] \
+   && grep -qs '^PATCH .* auth=legacy$' cf_reqs.log \
+   && has 'the basic Cloudflare auth header was rejected'; then
+  ok "T41 when Basic is rejected the cutover probes it once, falls back to X-Auth-Email/X-Auth-Key, and every later call including the PATCH uses the legacy pair"
+else ko "T41 legacy auth fallback" "rc=$RC origin=$new_origin41 basic=$n_basic legacy=$n_legacy out=$(tr '\n' '|' < out.txt) $(show)"; fi
+
+# T42 — credentials neither form accepts fail loudly and write nothing
+reset_cf; use_cf_profile existing none
+edge_run
+if [ "$RC" != 0 ] && has 'neither HTTP Basic' && ! grep -qs '^PATCH ' cf_reqs.log \
+   && ! grep -q 'auth_form' out.txt; then
+  ok "T42 credentials rejected by both header forms stop the run with the credential named as the cause, before any write"
+else ko "T42 both auth forms rejected" "rc=$RC $(show) patched=$(grep -c '^PATCH ' cf_reqs.log || true)"; fi
 
 pkill -f mock_railway.py 2>/dev/null
 pkill -f mock_origin.py 2>/dev/null
