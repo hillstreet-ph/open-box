@@ -148,7 +148,10 @@ jobs:
           fi
           echo "origin host $origin_host is bound to this service"
           echo "$ORIGIN_URL" >/dev/null
-          before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" | jq -r '.data.version // empty')
+          # The origin is exactly what is broken during an outage, so reading it
+          # must not abort the run: the promotion is the recovery action, and it
+          # has to be allowed to reach the write step.
+          before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null | jq -r '.data.version // empty' || true)
           echo "before_version=$before_version" >> "$GITHUB_OUTPUT"
           echo "reported before build: ${before_version:-none}"
           # The served entry assets, not the build stamp, are what identifies the
@@ -276,7 +279,7 @@ jobs:
           esac
 
           # Database-backed public settings through the edge (schema + pooler).
-          settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings")
+          settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings") || fail "the edge did not answer $SITE_URL/api/public/settings"
           echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null || fail "public settings payload is empty"
           version=$(echo "$settings" | jq -r '.data.version // empty')
           echo "serving version stamp: ${version:-none} (recorded only — open-box-next rewrites this shared row, so it cannot identify a promotion)"
