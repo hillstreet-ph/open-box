@@ -42,6 +42,27 @@ The channel tag is the only mutable artifact in this design. It is used by no
 other service, and every run records the immutable tag and digest behind it, so
 a rollback is a channel re-copy rather than a rebuild.
 
+**Correction to the premise above, kept because the design still earns its keep.**
+The sentence "there is no documented per-deploy mutation that rewrites that tag"
+was written from Railway's public docs. Reading the live schema on 2026-11-05
+contradicts it: `ServiceInstanceUpdateInput` does expose `source ::
+ServiceSourceInput` (alongside `buildCommand`, `dockerfilePath`, `startCommand`,
+`registryCredentials`, `healthcheckPath`, `numReplicas`, `region`, and more), so
+a per-deploy image rewrite *is* available — the workflow could PUT
+`main-<sha>` straight onto the service instead of copying a manifest.
+
+The channel design is kept anyway, for two reasons that are independent of that
+schema fact. First, `serviceInstanceRedeploy` re-pulls a tag rather than
+selecting a digest, so a per-deploy `source` rewrite would put an image
+reference chosen by CI into the deploy path, and the digest-equality proof — the
+one check that says "the bytes about to run are the bytes that were tested" —
+only exists because a mutable tag is being resolved and then verified. Second,
+the rewrite path needs the mutation to be accepted on every build; the copy path
+needs one Docker Hub manifest copy that is verifiable from outside Railway. If
+you switch to `serviceInstanceUpdate(input:{source:{…}}`, delete this paragraph,
+the sentence above, and step 2-3 in the same change, and re-check what the wait
+step can still prove.
+
 ## 1. Create the Railway project
 
 Done on 2026-11-04, recorded so the state is legible rather than magical:
@@ -66,10 +87,23 @@ volume, healthcheck and domain are configured identically every time.
 Already bound on 2026-11-04: `secrets.SUPABASE_DB_URL`, `secrets.DOCKERHUB_USERNAME`,
 `secrets.DOCKERHUB_TOKEN`, `vars.RAILWAY_PROJECT_ID` and
 `vars.RAILWAY_ENVIRONMENT_NAME`. The one binding that no agent can create is
-`secrets.RAILWAY_TOKEN`: a Railway API token is minted by an account holder, and
-a token that passed through a chat transcript or a command line is a leaked
-token. Create one at Railway → Account → Tokens (scoped to the `open-box`
-project), then pipe it in from your own terminal:
+`secrets.RAILWAY_TOKEN`.
+
+This is not caution, it is the shape of Railway's API. Probed on 2026-11-05 with
+an authenticated `railway` CLI session, linked to the `open-box` project and its
+`production` environment: `mutation{apiTokenCreate(...)}`,
+`mutation{projectTokenCreate(...)}` and the `apiTokens` query all return
+`INTERNAL_SERVER_ERROR: "Not Authorized"` — with and without the link. Minting a
+token is a dashboard action, so no workflow, script or agent can complete this
+step for you. (The schema also shows why the *kind* of token matters:
+`ApiTokenCreateInput` takes only `{name, workspaceId}` — no expiry, no scopes —
+and this workspace holds three projects, so a workspace token would let a CI
+runner reach `open-system` and `TGate Worker` too. `ProjectTokenCreateInput`
+takes `{projectId, environmentId, name}`.)
+
+Create a **project token** — Railway → the `open-box` project → Settings →
+Tokens, scoped to `open-box` / `production` — then pipe it in from your own
+terminal:
 
 ```sh
 read -s RAILWAY_TOKEN && printf '%s' "$RAILWAY_TOKEN" | \
@@ -77,21 +111,28 @@ read -s RAILWAY_TOKEN && printf '%s' "$RAILWAY_TOKEN" | \
 unset RAILWAY_TOKEN
 ```
 
+Never paste it into a chat and never pass it as a command-line argument: this
+run reads it from an env binding into a 0600 header file and calls curl with
+`-H @file`, so the value appears in no process list and no log line.
+
 Every other knob has a working default and needs setting only if you deviate
 from this document:
 
 | variable | default | meaning |
 | --- | --- | --- |
 | `vars.RAILWAY_PROJECT_NAME` | `open-box` | the name the run asserts before writing |
-| `vars.RAILWAY_ENVIRONMENT_NAME` | `Production` | environment lookup by name |
+| `vars.RAILWAY_ENVIRONMENT_NAME` | `Production` | environment lookup by name (this repo sets `production`) |
 | `vars.RAILWAY_SERVICE_NAME` | `open-box` | service created / looked up |
 | `vars.RAILWAY_CHANNEL_TAG` | `railway` | the mutable channel tag |
 | `vars.RAILWAY_MOUNT_PATH` | `/opt/openlist/data` | volume mount path |
 | `vars.RAILWAY_ORIGIN_URL` | empty | pins the origin instead of domain discovery |
 | `vars.SITE_URL` | `https://open-box.space` | written into the service env |
+| `vars.CLOUDFLARE_WORKER_NAME` | `open-box-gateway` | the Worker whose `ORIGIN_URL` is repointed |
+| `vars.CLOUDFLARE_ACCOUNT_ID` | empty | pins the account instead of probing every readable one |
 
-A missing prerequisite fails the run naming all five of them, without printing
-any value.
+A missing Railway, Docker Hub or database prerequisite fails the run naming all
+of them, without printing any value. Missing Cloudflare credentials do not fail
+a promotion: the cutover reports `skipped` and the edge gate says so.
 
 ## 3. Provision the service once
 
@@ -100,14 +141,17 @@ Dispatch **`provision and verify`**:
 ```sh
 gh workflow run openbox-deploy-railway.yml --repo hillstreet-ph/open-box \
   -f mode="provision and verify" \
-  -f image_tag=main-1e7093f \
+  -f image_tag=main-c098aae \
   -f expected_frontend_asset=index-DXZYoYrc.js \
   -f "rotate_confirmed=yes — allow write"
 ```
 
-`main-1e7093f` (manifest `sha256:439c9214…`) and the v4.2.11 entry asset
-`index-DXZYoYrc.js` are the current build and the current frontend release;
-replace both with the values for whatever you are actually shipping.
+`main-c098aae` (manifest `sha256:c56096c1216992c5a84acdd433c955ef87c04908c76bcc420dd7429992d2ab89`,
+published 2026-11-04T21:45Z, read back from Docker Hub on 2026-11-05) is the
+current build of `main`, and `index-DXZYoYrc.js` is the v4.2.11 entry asset it
+serves — `c098aae..1e7093f` changed no `frontend/` file, so the bundle name
+carries over. Replace both with the values for whatever you are actually
+shipping, and never trust this paragraph over `git log` and the built asset.
 
 It creates the service pinned to the channel tag, then writes the runtime
 variables (`SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`,
@@ -135,25 +179,61 @@ emits a warning rather than silently skipping the identity check.
 **`verify only (no write)`** runs the gate against whatever is already deployed
 and needs no rotation attestation. Use it for status checks.
 
-## 5. Repoint the edge — this is the step that brings the site back up
+## 5. Repoint the edge — CI does this now, and here is what it touches
 
 `open-box.space` is served by the Cloudflare Worker `open-box-gateway`, whose
-`ORIGIN_URL` binding still points at the dead
-`https://open-box-space.zeabur.app`. Until you change it, the site stays down
-even when Railway is healthy — and a failing edge check in a promotion run means
-exactly this, not an application defect. The gate says so in its own error text.
+`ORIGIN_URL` binding still pointed at the dead
+`https://open-box-space.zeabur.app` when this was last read (2026-11-05: eight
+bindings — `AI`, `AI_CONFIG`, `AI_CONFIG_KEY`, `APP_NAME`, `AUTH_REQUIRED`,
+`ORIGIN_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`). Until it changes, the
+site stays down even when Railway is healthy.
 
-There is no CI path for this Worker. Edit [deploy/cloudflare/wrangler.toml](../cloudflare/wrangler.toml):
+The workflow now does it for you. `Repoint the Cloudflare Worker at the Railway
+origin` runs **after** the Railway half of the gate has passed — it moves the
+live public domain, so it will not aim a browser at a container that failed its
+own health, token, database or bundle checks. It reads the Worker's settings,
+replaces the `ORIGIN_URL` binding alone, and reads everything back:
 
-```toml
-ORIGIN_URL = "https://<the railway service domain printed in step 3>"
-```
+* the write is a `PATCH /accounts/{account}/workers/scripts/{worker}/settings`,
+  `multipart/form-data` with one part named `settings` holding
+  `{"bindings":[…]}` as JSON (measured on a throwaway Worker: anything else is
+  rejected with code 10001 or 10201);
+* the `secret_text` bindings are **omitted** from that payload, which is what
+  preserves them — `AI_CONFIG_KEY` seals the provider keys and cannot be read
+  back, so any flow that restated the binding list from the repository config
+  would destroy it;
+* zone routes are a separate resource, and the step re-reads `open-box.space/*`
+  afterwards to prove it still belongs to `open-box-gateway`;
+* the credential's **header form is negotiated, not assumed**. `CLOUDFLARE_API_KEY`
+  has never been exercised from CI, and its name fits two different things: a
+  Global API Key travels as HTTP Basic (`email:key`) or as the legacy
+  `X-Auth-Email`/`X-Auth-Key` pair, and an API token travels as Basic. The step
+  writes both header files under `umask 077`, calls `GET /accounts` with each,
+  and uses whichever authenticates — recording `auth_form=basic|legacy` in the
+  step outputs. If neither does, it fails before any write and names the two
+  secrets to check, rather than reporting a rejected cutover three calls later.
 
-then deploy from this directory:
+`edge_write` is recorded as `wrote` the moment the PATCH succeeds, before the
+read-back guards — so a run that writes and then fails a guard reports that the
+edge moved, not that it was skipped.
 
-```sh
-cd deploy/cloudflare && npx wrangler deploy
-```
+It needs `secrets.CLOUDFLARE_API_KEY` and `secrets.CLOUDFLARE_EMAIL`, which this
+repository already has. Without them the step says `edge_write=skipped` and the
+edge gate names that instead of pretending the site is up. Two optional knobs
+narrow the discovery: `vars.CLOUDFLARE_WORKER_NAME` (default
+`open-box-gateway`) and `vars.CLOUDFLARE_ACCOUNT_ID` (default: probe every
+account the credentials can read, and refuse if more than one owns the Worker).
+
+**Why this is not `wrangler deploy`.** [deploy/cloudflare/wrangler.toml](../cloudflare/wrangler.toml)
+has no `routes` and no `workers_dev` key, so it does not declare how the Worker
+is routed, and it carries fewer bindings than are live — `AI_CONFIG_KEY` and the
+sealed provider configuration are not in it. A CI `wrangler deploy` would upload
+that smaller config over the running Worker and could detach the route from an
+already-down site. The settings PATCH changes one value and leaves the rest of
+the live config alone, which is the whole reason it was chosen. `npx wrangler
+deploy` remains the right tool when you have deliberately changed the code or the
+committed bindings — from a terminal, after reading `npx wrangler deployments
+list` and the dashboard's domain/route entries.
 
 Re-check TLS afterwards, then consider the apex DNS record: `open-box.space`
 still carries a proxied CNAME to the retired host. Traffic follows the Worker
@@ -161,22 +241,12 @@ binding, not that record, so it is a cleanup item, not a switch. Once the
 Railway service domain is stable and you own a custom domain on the service,
 point the record there and update `ORIGIN_URL` to match.
 
-**Why this deploy stays manual, and what to look at first.** The Worker is
-attached to `open-box.space` outside this repository:
-[deploy/cloudflare/wrangler.toml](../cloudflare/wrangler.toml) has no `routes`
-and no `workers_dev` key, so the file does not declare how the Worker is routed.
-Cloudflare's guidance for dashboard-managed routes is to keep the config free of
-route keys *and* set `workers_dev = false` — without that, a deploy is allowed to
-reconcile the Worker against a config that describes less than what is live, and
-since November 2025 `wrangler deploy` asks before overriding remote settings. A
-human at a terminal can answer that prompt; CI cannot, and a wrong answer here
-detaches the route from an already-down site. So before deploying, read what is
-actually configured — `npx wrangler deployments list` in that directory, plus the
-domain/route entries in the Cloudflare dashboard — record them in the file, and
-only then treat a non-interactive deploy as safe. If you want a CI path, first
-make the committed config a complete description of the live Worker, then add a
-workflow that runs with `--strict` (fails instead of prompting) and verifies the
-edge afterwards.
+**Rolling the edge back is not a recovery.** The old origin is the retired Zeabur
+host, which answers nothing; repointing the Worker back at it restores an outage
+rather than a service. If a promotion is bad, roll the **channel tag** back at
+the previous digest (step 4's report prints the command) and re-run — the Railway
+service domain does not change between builds, so the cutover step reports
+`unchanged` and leaves the edge alone.
 
 ## 6. Verify
 
@@ -221,12 +291,24 @@ workflow rather than about a copy of it:
 bash deploy/railway/harness/run_tests.sh
 ```
 
-Thirty-one assertions cover channel-digest equality in both directions, the
+Forty-nine assertions cover channel-digest equality in both directions, the
 retired-id refusal, the rotation attestation gate and its verify-only exemption,
 bindings reporting without value leakage, the malformed-binding refusals (a
 project id carrying JSON metacharacters, a channel tag carrying a slash),
 provisioning detail (volume, `/ping`, domain, DSN never logged), the wait step's
 refusal to accept a
 `SUCCESS` that serves a stale bundle, `CRASHED` abort, every gate rejection
-path, and the cleanup step deleting each credential file. It needs `python3`,
+path, and the cleanup step deleting each credential file. The edge block covers
+the Cloudflare cutover against `mock_cloudflare.py`: that the settings PATCH
+replaces `ORIGIN_URL` alone while the `ai`, `kv_namespace`, `secret_text` and
+other `plain_text` bindings survive; that an already-correct origin issues no
+PATCH; that `verify only` writes nothing; that a missing or secret-shaped
+`ORIGIN_URL` binding is refused rather than guessed; that account ownership is
+probed when nothing is configured; that a rejected PATCH, a detached zone route
+and an unreadable zone each produce their own honest outcome; that the step
+negotiates which credential form the secret actually holds instead of assuming
+one (Basic rejected once, the legacy pair used for every call after it; both
+rejected means no write at all); and that no credential reaches a log in any
+form — including its base64 encoding, which is what a Basic header actually is.
+It needs `python3`,
 `ruby` (for the YAML extraction) and `jq`.

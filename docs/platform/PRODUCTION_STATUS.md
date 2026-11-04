@@ -2,10 +2,16 @@
 
 Verified 2026-10-10. Public application: https://open-box.space.
 
-**Read this first (2026-11-04):** the runtime moved off Zeabur to Railway, and
-`open-box.space` is **down** right now. Everything from line 5 down to the
+**Read this first (2026-11-05):** the runtime moves off Zeabur to Railway, and
+`open-box.space` is **down** right now — the Cloudflare Worker's `ORIGIN_URL` still
+names the retired Zeabur host. Everything from line 5 down to the
 "Frontend channel fixed" section is the Zeabur-era record — accurate as history,
-not as current state. The move and the exact remaining gates are in
+not as current state. As of this pass the delivery path is complete in code: the
+deploy workflow provisions the Railway service, promotes the image, gates the
+origin, repoints the Worker, and gates the public edge, in that order. What it
+cannot do is start: `secrets.RAILWAY_TOKEN` does not exist and cannot be minted by
+any agent, so the whole run is blocked on one human step. The exact remaining
+gates are in
 [The runtime moved to Railway](#the-runtime-moved-to-railway-2026-11-04-issue-28-reversed)
 and the operational procedure is [deploy/railway/README.md](../../deploy/railway/README.md).
 
@@ -523,14 +529,15 @@ days. The workflow behaved correctly — it refused to call that a promotion.
 
 | Component | State on 2026-11-04 |
 | --- | --- |
-| Delivery path | `.github/workflows/openbox-deploy-railway.yml`, 12 steps |
-| Runbook | [deploy/railway/README.md](../../deploy/railway/README.md) — step 5 is the Worker repoint |
+| Delivery path | `.github/workflows/openbox-deploy-railway.yml`, 14 steps — the gate is split into a Railway half and a Cloudflare edge half, with the edge repoint between them |
+| Runbook | [deploy/railway/README.md](../../deploy/railway/README.md) — step 5 is the Worker repoint, now automated by the workflow itself |
 | Railway contract | `railway.json`: `DOCKERFILE` builder, `/ping` healthcheck, 300s timeout, `ON_FAILURE` restart, max 10 retries |
 | Old path | `openbox-deploy.yml` first step now exits 1 naming the Railway workflow; `openbox-zeabur-diagnose.yml` kept as read-only evidence with a retirement header |
-| Edge | `deploy/cloudflare/wrangler.toml` still carries `ORIGIN_URL = "https://open-box-space.zeabur.app"`, annotated as retired — that file is what is deployed |
-| Railway project | `open-box` / `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, environment `production`, workspace billing active and under its limit (period usage `$5.68`, estimated `$8.92`, no hard limit set) |
-| GitHub bindings | `vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME=production` set; `secrets.SUPABASE_DB_URL`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` already present |
-| Missing binding | `secrets.RAILWAY_TOKEN` — minted only by the account holder; see the runbook step 2 for the stdin-only command |
+| Edge | `deploy/cloudflare/wrangler.toml` still carries `ORIGIN_URL = "https://open-box-space.zeabur.app"`, annotated as retired. What is actually live is a superset of that file: the Worker has eight bindings (`ai`, one `kv_namespace`, one `secret_text`, four `plain_text`) and a zone route, none of which the committed config describes — see [deploy/CONFIG_MAP.md](../../deploy/CONFIG_MAP.md). This is why the cutover is a settings `PATCH`, not a `wrangler deploy`. |
+| Railway project | `open-box` / `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, environment `production` (`d6643a74-1232-4d7c-8f6c-a6549de452e8` — re-queried 2026-11-05; it is the project's only environment and its lowercase name is what `vars.RAILWAY_ENVIRONMENT_NAME` matches), workspace billing active and under its limit (period usage `$5.68`, estimated `$8.92`, no hard limit set) |
+| Immutable build | `hillstreet/open-box:main-c098aae` at manifest `sha256:c56096c1216992c5a84acdd433c955ef87c04908c76bcc420dd7429992d2ab89`, pushed 2026-11-04T21:45Z. `c098aae..1e7093f` touched no file under `frontend/`, so the expected entry asset for the first promote is `index-DXZYoYrc.js` — the v4.2.11 entry named in the runbook step 3 example. |
+| GitHub bindings | `vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME=production` set; `secrets.SUPABASE_DB_URL`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` already present; `secrets.CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` already present (2026-09-01) and now consumed by the edge step |
+| Missing binding | `secrets.RAILWAY_TOKEN` — minted only in the Railway dashboard; see the runbook step 2 for the stdin-only command. API minting is not possible: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` each return `INTERNAL_SERVER_ERROR "Not Authorized"` against an authenticated, project-linked CLI session. |
 | Railway service | does not exist yet; provisioning is the workflow's job, not a hand-built service |
 
 **So: `open-box.space` is still down, and nothing on Railway is verified as
@@ -546,15 +553,21 @@ workflow's own gate is what would have to say otherwise.
 
 Three levels, in increasing strength:
 
-1. `ruby -ryaml` parses all three touched workflow files (12 / 9 / 6 steps).
+1. `ruby -ryaml` parses all three touched workflow files (14 / 9 / 6 steps).
 2. Every extracted `run:` body passes `bash -n`.
 3. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
-   the YAML and executes them against a mock Railway GraphQL API and a mock
-   Open-Box origin — 31 assertions, all passing. Running shipped code rather
-   than a transcription is the point; three of the harness's early failures were
-   harness bugs (an unset redirection, a non-mutating `gsub`, a `GET /ping`
-   readiness probe against a POST-only mock), which is exactly the class of
-   mistake this structure catches.
+   the YAML and executes them against a mock Railway GraphQL API, a mock
+   Open-Box origin and a mock Cloudflare edge — 49 assertions, all passing.
+   Running shipped code rather than a transcription is the point; three of the
+   harness's early failures were harness bugs (an unset redirection, a
+   non-mutating `gsub`, a `GET /ping` readiness probe against a POST-only mock),
+   which is exactly the class of mistake this structure catches. The edge mock
+   reproduces the `PATCH …/workers/scripts/{name}/settings` semantics that were
+   measured against two scratch Workers before this shipped: the request must be
+   `multipart/form-data` with a part named `settings`; bindings omitted from the
+   payload survive; and a name already bound as `plain_text` cannot be re-added
+   as a secret. The scratch Workers were deleted; the production Worker and its
+   zone route were only ever read.
 
 One real workflow defect surfaced in review and was fixed: the edge check read
 the `/api/fs/list` reply as a literal byte prefix `'{"code":200'*`, so a proxy
@@ -569,14 +582,55 @@ slash would have changed the query or the registry path instead of failing
 loudly. They are now shape-validated in the bindings step (`strict_shape`), and
 the four `project(id:)` variable objects are built with `jq -n --arg` rather
 than by string concatenation, so no repository-provided value reaches a request
-body unescaped. Harness assertions T19b and T19c cover both directions; the
-suite is 31/31. `image_tag` already had the equivalent whitelist, and the free
+body unescaped. Harness assertions T19b and T19c cover both directions; that pass left the suite
+at 31/31. `image_tag` already had the equivalent whitelist, and the free
 text inputs (`expected_frontend_asset`, `expected_site_name`) were audited and
 are used only inside quoted `[ ]` comparisons and `case` patterns, never in an
 eval position — that is why they did not need the same treatment. No HawkScan
 run was possible here: the `hawk` CLI is not installed, `HAWK_API_KEY` is unset,
 there is no `stackhawk.yml`, and a DAST scan needs a live target — which is
 exactly what this migration does not yet have. The review above is static.
+
+A third pass made the migration end to end in code by giving the public edge a
+delivery path. Before it, the workflow stopped at the Railway origin and left
+`ORIGIN_URL` as a hand edit, so "deployed" and "reachable" were still two
+different claims. The gate is now split: `id: gate` checks the Railway runtime
+(health, token routes, database-backed reads, TLS), `id: edge` repoints the
+Worker, and a final "Production gate — Cloudflare edge" step re-checks the domain
+through Cloudflare. That order is
+the safety property — a live domain is never aimed at a container that has not
+already passed its own checks. The cutover is idempotent (`edge_write=unchanged`,
+which exits 0 when the Worker already holds the target), skips visibly when
+credentials or a resolved origin are absent (`edge_write=skipped`, so the edge
+gate can say which), and refuses to proceed when `ORIGIN_URL` is bound as
+something other than `plain_text`, because then the fix is a dashboard edit and
+not a rewrite. After writing it re-reads the bindings and asserts the secret count
+and binding-name set are unchanged before it will call the cutover done, and it
+re-reads the zone route — a detached route after a write is a hard failure, an
+unreadable zone is a `route_verified=unverified` warning. Harness tests T26–T42
+cover each of those branches. One thing the mock could not settle was the
+transport credential: `secrets.CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` have
+never been used by any CI run in this repository's history (a `git log -S` over
+every workflow, script and doc finds no prior Cloudflare API call), and the
+scratch-Worker measurements were made through an authenticated Cloudflare MCP
+session, not through that pair. So the step does not assume a header form — it
+writes both candidates under `umask 077`, probes `GET /accounts` with each, and
+runs on whichever authenticates, failing before any write if neither does. The
+mock models each answer (`CF_MOCK_AUTH=any|basic|legacy|none`) and T41/T42
+pin the fallback and the double rejection. The credential form itself stays
+unverified until the first real run says so, which is the honest position: the
+alternative was to hardcode Basic and discover the problem on a site that is
+already down.
+`edge_write` is now emitted the moment the PATCH
+succeeds rather than after the read-back guards, so a run that writes and then
+fails a guard cannot be described as one that skipped the cutover.
+
+One premise in the earlier design was wrong and is corrected here: Railway's
+`ServiceInstanceUpdateInput` *does* expose `source :: ServiceSourceInput`, so a
+per-deploy image rewrite is possible after all. The channel-tag design is kept
+anyway — a promote that copies a manifest onto `railway` and proves the channel
+digest equals the promoted digest leaves an artifact a reader can verify, which a
+silent `source` mutation does not.
 
 ### Design decisions worth keeping visible
 
@@ -602,6 +656,7 @@ the workflow and that comment together.
 
 ## Remaining rollout gates
 
+- The Zeabur→Railway migration is now the top item, and it has exactly one blocker outside this repository: `secrets.RAILWAY_TOKEN`. The owner mints a Railway **project token** for `open-box` / `production` in the dashboard and pipes it straight into `gh secret set` from their own terminal (runbook step 2 has the `read -s` form; the value must not pass through a chat transcript or a command line). Then runbook step 3 (`provision and verify`) creates and checks the service, step 4 (`promote and verify`) publishes the channel build, redeploys, gates the origin, repoints the Worker and gates the edge, and step 6 verifies. Nothing in that sequence has been run against production, so no production check may be reported as passed until a dispatch says so.
 - Workflow dispatch works again. The 422 ("Actions disabled for the account") and the rotation attestation were already resolved, and the billing lock that followed them released at 21:52Z: run `41247679221` promoted `main-ef241d2` and passed the production gate. If runs start going 3-to-5 seconds with no steps again, check `https://github.com/settings/billing` for `hillstreet-ph` before reading anything into the code.
 - Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository. The owner attested rotation for the promotion gate; that attestation is not evidence this repository could verify, and the pasted GitHub PAT in particular should be confirmed revoked at `https://github.com/settings/tokens`.
 - Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (third pass), `main-35a4ce0` (fourth pass), `main-ef241d2` (fifth pass, digest `sha256:f30d6d4e…`), `main-7d238fe` (sixth pass, digest `sha256:5dfc5fdb…`, chi 5.4.0) and `main-7af6579` (seventh pass, digest `sha256:e2bb8b4c…`, frontend `v4.2.10` — the rebuilt console). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. The LDAP row is a stored setting and is unchanged: the production database still holds `ldap_login_enabled = 'true'` with an empty `ldap_server`, and the running binary now publishes `false` while the directory is unusable, which is the behavior the fix was wanted for. **And re-read the stamp before dispatching:** the fifth pass believed its pin had made production immune to `latest`, the sixth found unprompted rolls, and the seventh found that a roll can also *not* happen for half an hour — so read the stamp, and treat the gate as the only delivery path.
