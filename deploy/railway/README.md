@@ -204,10 +204,12 @@ workflow rather than about a copy of it:
 bash deploy/railway/harness/run_tests.sh
 ```
 
-Twenty-nine assertions cover channel-digest equality in both directions, the
+Thirty-one assertions cover channel-digest equality in both directions, the
 retired-id refusal, the rotation attestation gate and its verify-only exemption,
-bindings reporting without value leakage, provisioning detail (volume,
-`/ping`, domain, DSN never logged), the wait step's refusal to accept a
+bindings reporting without value leakage, the malformed-binding refusals (a
+project id carrying JSON metacharacters, a channel tag carrying a slash),
+provisioning detail (volume, `/ping`, domain, DSN never logged), the wait step's
+refusal to accept a
 `SUCCESS` that serves a stale bundle, `CRASHED` abort, every gate rejection
 path, and the cleanup step deleting each credential file. It needs `python3`,
 `ruby` (for the YAML extraction) and `jq`.

@@ -550,7 +550,7 @@ Three levels, in increasing strength:
 2. Every extracted `run:` body passes `bash -n`.
 3. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
    the YAML and executes them against a mock Railway GraphQL API and a mock
-   Open-Box origin — 29 assertions, all passing. Running shipped code rather
+   Open-Box origin — 31 assertions, all passing. Running shipped code rather
    than a transcription is the point; three of the harness's early failures were
    harness bugs (an unset redirection, a non-mutating `gsub`, a `GET /ping`
    readiness probe against a POST-only mock), which is exactly the class of
@@ -560,6 +560,23 @@ One real workflow defect surfaced in review and was fixed: the edge check read
 the `/api/fs/list` reply as a literal byte prefix `'{"code":200'*`, so a proxy
 or encoder that reformats JSON would have failed a healthy deployment. It now
 reads `.code` with `jq` and distinguishes "not JSON" from "unexpected code".
+
+A second pass, after PR #91 was open, hardened the binding boundary. Three
+repository variables — `RAILWAY_PROJECT_ID`, `DOCKERHUB_NAMESPACE`,
+`RAILWAY_CHANNEL_TAG` — were concatenated into GraphQL request bodies and
+Docker Hub URLs after only a non-empty check, so a value containing a quote or a
+slash would have changed the query or the registry path instead of failing
+loudly. They are now shape-validated in the bindings step (`strict_shape`), and
+the four `project(id:)` variable objects are built with `jq -n --arg` rather
+than by string concatenation, so no repository-provided value reaches a request
+body unescaped. Harness assertions T19b and T19c cover both directions; the
+suite is 31/31. `image_tag` already had the equivalent whitelist, and the free
+text inputs (`expected_frontend_asset`, `expected_site_name`) were audited and
+are used only inside quoted `[ ]` comparisons and `case` patterns, never in an
+eval position — that is why they did not need the same treatment. No HawkScan
+run was possible here: the `hawk` CLI is not installed, `HAWK_API_KEY` is unset,
+there is no `stackhawk.yml`, and a DAST scan needs a live target — which is
+exactly what this migration does not yet have. The review above is static.
 
 ### Design decisions worth keeping visible
 
