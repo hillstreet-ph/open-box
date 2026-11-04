@@ -2,6 +2,13 @@
 
 Verified 2026-10-10. Public application: https://open-box.space.
 
+**Read this first (2026-11-04):** the runtime moved off Zeabur to Railway, and
+`open-box.space` is **down** right now. Everything from line 5 down to the
+"Frontend channel fixed" section is the Zeabur-era record — accurate as history,
+not as current state. The move and the exact remaining gates are in
+[The runtime moved to Railway](#the-runtime-moved-to-railway-2026-11-04-issue-28-reversed)
+and the operational procedure is [deploy/railway/README.md](../../deploy/railway/README.md).
+
 As of 2026-10-31 22:20Z the service runs `hillstreet/open-box:main-ef241d2` (manifest digest `sha256:f30d6d4e…`, pushed 22:16:57Z, `Build at: 2026-10-31 21:54:01 +0000`) with the fork frontend's `index-D-qN4CSQ.js`; that is the fifth pass below, and it is the build that carries the scoped-token work, the sign-in attempt window, the LDAP availability rule and the test-suite fixes. The table below is the 10-10 snapshot it grew out of.
 
 ## Verified deployment
@@ -11,8 +18,8 @@ As of 2026-10-31 22:20Z the service runs `hillstreet/open-box:main-ef241d2` (man
 | Cloudflare gateway | `open-box-gateway`, account `c0e6bd9a7249856cb8497e7fe340e7ce` |
 | Current edge version | `c02b9dc1-0c96-4f7b-a59d-846eb12cdfca` |
 | Current edge deployment | `5c3c6092-bd46-483a-96a4-611b3061d642`, 100% traffic |
-| Zeabur | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce`, running |
-| Origin | https://open-box-space.zeabur.app |
+| Zeabur | Project `6a966cc0a85370460248e847`, service `6a967b310e919aed614685ce`, running *(at that snapshot; the project was retired 2026-11-02)* |
+| Origin | https://open-box-space.zeabur.app *(still the Worker's `ORIGIN_URL`; the host no longer serves)* |
 | Runtime version | Backend commit `a879c97`, frontend v4.2.6; older than current repository |
 | Supabase | `huadtiuuoiriqrjpjxhr`; `public.x_*` tables present |
 | Storage mounts | Zero, confirmed through administrator API and database |
@@ -496,6 +503,102 @@ The stamp is still printed in the report, because it is the only thing that dist
 `OpenList-Frontend` v4.2.11 (tag at `f09f288`, entry asset `index-DXZYoYrc.js`, manage chunk `manage-CWgqGgVB.js`) ships the sidebar that owns its own toggle and drag-to-resize handle, the pinned account row, and the `onClick` → `onSelect` fix that made those menu items do anything at all. It was verified against a local mock backend with Playwright, which closes the first of the two "not verified" items above for this build: signing out, the account menu, the rail toggle and the drawer were all exercised in a browser.
 
 That fork still has no registered repository workflow, so the artifact was packaged from the same `build.sh` output layout and published by hand. One consequence worth stating: the rolling `edge` release on the fork was immutable, and its tag cannot be recreated because a repository rule restricts creations of `refs/tags/edge`. The `edge` release therefore no longer exists. `build.sh release docker` reads `releases/latest`, not `edge` — only `dev` and `beta` call `FetchWebRolling`, and `FetchWebRolling` falls back to the latest stable release when `edge` is missing — so the merge channel is unaffected, and the stamp and the bytes now agree instead of disagreeing. Restoring a real edge channel needs either the fork's rolling workflow registered or that tag rule relaxed.
+
+## The runtime moved to Railway: 2026-11-04 (issue #28 reversed)
+
+The operator directed the production server to move from Zeabur to Railway. This
+reverses the earlier decision recorded in issue #28 ("Repair production
+deployment and remove Railway"), which is why that issue is retitled rather than
+closed.
+
+What the reversal is a response to: the gated Zeabur promotion run `41775833096`
+(dispatched 2026-11-04T04:52:47Z, `promote and verify`) resolved its image,
+wrote `hillstreet/open-box:main-1e7093f` at manifest
+`sha256:439c9214466c07bf28e1a38334dc12392eccba06eb29c4e91867f447c500ca66`,
+waited the full deadline and failed with *"the origin never served a frontend
+bundle that differs from the pre-promotion one"*. That is the outage in
+[issue #87](https://github.com/hillstreet-ph/open-box/issues/87) showing up in
+the delivery path, not an image defect: the target origin had been dead for two
+days. The workflow behaved correctly — it refused to call that a promotion.
+
+| Component | State on 2026-11-04 |
+| --- | --- |
+| Delivery path | `.github/workflows/openbox-deploy-railway.yml`, 12 steps |
+| Runbook | [deploy/railway/README.md](../../deploy/railway/README.md) — step 5 is the Worker repoint |
+| Railway contract | `railway.json`: `DOCKERFILE` builder, `/ping` healthcheck, 300s timeout, `ON_FAILURE` restart, max 10 retries |
+| Old path | `openbox-deploy.yml` first step now exits 1 naming the Railway workflow; `openbox-zeabur-diagnose.yml` kept as read-only evidence with a retirement header |
+| Edge | `deploy/cloudflare/wrangler.toml` still carries `ORIGIN_URL = "https://open-box-space.zeabur.app"`, annotated as retired — that file is what is deployed |
+| Railway project | `open-box` / `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, environment `production`, workspace billing active and under its limit (period usage `$5.68`, estimated `$8.92`, no hard limit set) |
+| GitHub bindings | `vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME=production` set; `secrets.SUPABASE_DB_URL`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` already present |
+| Missing binding | `secrets.RAILWAY_TOKEN` — minted only by the account holder; see the runbook step 2 for the stdin-only command |
+| Railway service | does not exist yet; provisioning is the workflow's job, not a hand-built service |
+
+**So: `open-box.space` is still down, and nothing on Railway is verified as
+serving anything.** Production health remains exactly what the outage section
+above recorded. Re-checked on 2026-11-05: `curl https://open-box.space/` fails
+with `curl: (28) Operation timed out after 15006 milliseconds with 0 bytes
+received`, and the retired `https://open-box-space.zeabur.app/` times out at the
+TCP connect, so both hops are dead, not merely erroring. The evidence this pass
+adds is about the delivery mechanism, not about a live deployment — and the
+workflow's own gate is what would have to say otherwise.
+
+### How the workflow is validated without a production target
+
+Three levels, in increasing strength:
+
+1. `ruby -ryaml` parses all three touched workflow files (12 / 9 / 6 steps).
+2. Every extracted `run:` body passes `bash -n`.
+3. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
+   the YAML and executes them against a mock Railway GraphQL API and a mock
+   Open-Box origin — 31 assertions, all passing. Running shipped code rather
+   than a transcription is the point; three of the harness's early failures were
+   harness bugs (an unset redirection, a non-mutating `gsub`, a `GET /ping`
+   readiness probe against a POST-only mock), which is exactly the class of
+   mistake this structure catches.
+
+One real workflow defect surfaced in review and was fixed: the edge check read
+the `/api/fs/list` reply as a literal byte prefix `'{"code":200'*`, so a proxy
+or encoder that reformats JSON would have failed a healthy deployment. It now
+reads `.code` with `jq` and distinguishes "not JSON" from "unexpected code".
+
+A second pass, after PR #91 was open, hardened the binding boundary. Three
+repository variables — `RAILWAY_PROJECT_ID`, `DOCKERHUB_NAMESPACE`,
+`RAILWAY_CHANNEL_TAG` — were concatenated into GraphQL request bodies and
+Docker Hub URLs after only a non-empty check, so a value containing a quote or a
+slash would have changed the query or the registry path instead of failing
+loudly. They are now shape-validated in the bindings step (`strict_shape`), and
+the four `project(id:)` variable objects are built with `jq -n --arg` rather
+than by string concatenation, so no repository-provided value reaches a request
+body unescaped. Harness assertions T19b and T19c cover both directions; the
+suite is 31/31. `image_tag` already had the equivalent whitelist, and the free
+text inputs (`expected_frontend_asset`, `expected_site_name`) were audited and
+are used only inside quoted `[ ]` comparisons and `case` patterns, never in an
+eval position — that is why they did not need the same treatment. No HawkScan
+run was possible here: the `hawk` CLI is not installed, `HAWK_API_KEY` is unset,
+there is no `stackhawk.yml`, and a DAST scan needs a live target — which is
+exactly what this migration does not yet have. The review above is static.
+
+### Design decisions worth keeping visible
+
+Railway documents no per-deploy mutation that rewrites an image tag, so
+promotion copies the immutable manifest onto a dedicated mutable channel tag
+(`hillstreet/open-box:railway`) with `docker buildx imagetools create` and
+**refuses to redeploy unless the channel digest equals the promoted digest** —
+T16 and T17 pin both directions of that guard. Readiness is bound to the
+deployment id plus the entry asset actually served (T7 refuses a `SUCCESS` that
+still serves the previous bundle; T10 aborts on `CRASHED`). The gate rejects a
+runtime that reports a `site_name` other than `Open-Box`, which is what separates
+a service reading the production Postgres from one that quietly booted a local
+sqlite file (T12), and it rejects a pre-scoped-token binary and an SPA fallback
+on the token route (T13, T13b). Rejected volume and healthcheck writes degrade to
+visible `::warning::`s with the dashboard fallback (T23, T23b) instead of
+claiming success. No secret value is ever interpolated into a script body, and
+the always-run cleanup deletes the bearer and response files (T18, T22, T24, T25).
+
+`RAILWAY_RUN_UID=0` is a real reduction in container isolation. It is there
+because the image runs as uid 1001 while Railway mounts its volume root-owned, so
+the entrypoint's writability check aborts otherwise; a non-root fix should change
+the workflow and that comment together.
 
 ## Remaining rollout gates
 

@@ -1,5 +1,13 @@
 name: Open-Box Deploy (Zeabur)
 
+# RETIRED — do not run. The Zeabur runtime stopped serving
+# `open-box-space.zeabur.app` on 2026-11-02 (issue #87) and the operator directed
+# the production runtime to move to Railway (issue #28). The delivery path is now
+# `.github/workflows/openbox-deploy-railway.yml`, the runbook is
+# `deploy/railway/README.md`, and the first step of this job refuses every run so
+# a stale habit cannot write to a dead platform. This file is kept for the gate
+# history it encodes; deleting it would lose that.
+
 # Promotion of an already-built Docker Hub image to the production Zeabur
 # service, followed by the live production gate recorded in deploy/PRODUCTION.md
 # (item 4: immutable image, health, database connectivity, login, storage,
@@ -63,6 +71,18 @@ jobs:
       RETIRED_PROJECT_ID: ymhiwerqyegvondndkjn
 
     steps:
+      - name: Refuse the retired Zeabur runtime
+        run: |
+          set -euo pipefail
+          cat >&2 <<'MSG'
+          ::error::This workflow targets the retired Zeabur runtime, which stopped
+          serving on 2026-11-02. Production promotion now runs
+          .github/workflows/openbox-deploy-railway.yml (runbook:
+          deploy/railway/README.md). Nothing below this step has been executed,
+          and no Zeabur write was attempted.
+          MSG
+          exit 1
+
       - name: Confirm the rotation precondition
         env:
           ROTATE_CONFIRMED: ${{ inputs.rotate_confirmed }}

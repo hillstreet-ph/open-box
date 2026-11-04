@@ -4,6 +4,11 @@ compatibility_date = "2026-08-28"
 
 [vars]
 APP_NAME = "Open-Box"
+# RETIRED: this host stopped serving on 2026-11-02. The Railway service domain
+# printed by the `provision and verify` run must replace it here (or with
+# `wrangler secret put`-style var override) before `npx wrangler deploy` —
+# see deploy/railway/README.md step 5. Until then open-box.space is down even
+# when Railway is healthy.
 ORIGIN_URL = "https://open-box-space.zeabur.app"
 SUPABASE_URL = "https://huadtiuuoiriqrjpjxhr.supabase.co"
 AUTH_REQUIRED = "false"

@@ -1,0 +1,804 @@
+name: Open-Box Deploy (Railway)
+
+# Promotion of an already-built Docker Hub image to the production Railway
+# service, followed by the same live gate the Zeabur workflow enforces
+# (deploy/PRODUCTION.md item 4: immutable image, health, database connectivity,
+# login, storage, domain/TLS, restart recovery).
+#
+# Why this exists: the Zeabur runtime stopped answering on 2026-11-02 and the
+# gated promotion run 41775833096 wrote its tag, waited the full 15 minutes and
+# failed with "the origin never served a frontend bundle that differs from the
+# pre-promotion one". The operator directed the runtime to move to Railway, so
+# this workflow is both the delivery path and the recovery path.
+#
+# How Railway is promoted, and why it is written this way:
+#   * Railway's documented image-source service pins a tag, and there is no
+#     documented API mutation for rewriting that tag per deploy. The documented
+#     behaviour for a non-semver tag is that a redeploy re-pulls the current
+#     digest. So this workflow publishes an immutable per-commit build onto a
+#     dedicated channel tag (hillstreet/open-box:railway) by copying the
+#     manifest, then proves by digest that the channel is byte-identical to the
+#     build it was told to promote. The channel tag is the only mutable thing
+#     here, it is used by nothing else, and every run records the immutable tag
+#     and digest behind it.
+#   * The retired-project guard from the Zeabur workflow survives as a project
+#     name assertion: the run refuses to touch a Railway project whose name is
+#     not RAILWAY_PROJECT_NAME, and refuses the retired Zeabur identifier
+#     outright, so a wrong binding is visible in the log before any write.
+#   * No secret value is ever interpolated into a shell script body. Secrets
+#     arrive through env:, the bearer token is written once by a builtin printf
+#     into a 0600 header file under umask 077, the GraphQL helper lives in
+#     /tmp/rw_gql.sh and is sourced by each step, and a final always-run step
+#     deletes the credential files. The database DSN reaches jq from a 0600
+#     file, so it appears neither on a command line nor in a log line.
+#
+# Preconditions this workflow refuses to assume:
+#   * docs/PLATFORM_BACKEND.md states the historically shared management tokens
+#     were exposed in chat and must be rotated before write-enabled deployment.
+#     The operator confirms that here; the workflow never prints a token.
+#   * A Railway token (secrets.RAILWAY_TOKEN), a project
+#     (vars.RAILWAY_PROJECT_ID) and the SUPABASE_DB_URL secret must already
+#     exist. Creating a Railway account, project and payment method is a human
+#     action outside CI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "provision creates the service once; promote rolls the existing service to a new build; verify only runs the gate without any write"
+        required: true
+        type: choice
+        options:
+          - "provision and verify"
+          - "promote and verify"
+          - "verify only (no write)"
+        default: "promote and verify"
+      image_tag:
+        description: "Docker Hub tag of hillstreet/open-box to promote (blank keeps the current channel build)"
+        required: false
+        type: string
+        default: ""
+      expected_frontend_asset:
+        description: "Asset name the served index.html must reference (e.g. index-DXZYoYrc.js); blank skips the frontend identity check"
+        required: false
+        type: string
+        default: ""
+      expected_site_name:
+        description: "site_name the shared database must report, proving Postgres rather than a fresh local database (blank skips)"
+        required: false
+        type: string
+        default: "Open-Box"
+      rotate_confirmed:
+        description: "Provider management tokens were rotated (docs/PLATFORM_BACKEND.md)"
+        required: true
+        type: choice
+        options:
+          - "no — stop"
+          - "yes — allow write"
+        default: "no — stop"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openbox-railway-deploy
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
+      RAILWAY_API: https://backboard.railway.com/graphql/v2
+      RAILWAY_HEADER: /tmp/rw.header
+      DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || 'hillstreet' }}
+      IMAGE_NAME: open-box
+      CHANNEL_TAG: ${{ vars.RAILWAY_CHANNEL_TAG || 'railway' }}
+      PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      EXPECTED_PROJECT_NAME: ${{ vars.RAILWAY_PROJECT_NAME || 'open-box' }}
+      ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME || 'Production' }}
+      SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME || 'open-box' }}
+      MOUNT_PATH: ${{ vars.RAILWAY_MOUNT_PATH || '/opt/openlist/data' }}
+      ORIGIN_OVERRIDE: ${{ vars.RAILWAY_ORIGIN_URL }}
+      RETIRED_ZEABUR_PROJECT_ID: ymhiwerqyegvondndkjn
+      MODE: ${{ inputs.mode }}
+
+    steps:
+      - name: Confirm the rotation precondition
+        env:
+          ROTATE_CONFIRMED: ${{ inputs.rotate_confirmed }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "verify only (no write)" ]; then
+            echo "Verify-only run: no Railway write will be attempted, so no rotation attestation is required."
+            exit 0
+          fi
+          if [ "$ROTATE_CONFIRMED" != "yes — allow write" ]; then
+            echo "::error::Deployment is gated on rotating the previously exposed management tokens (docs/PLATFORM_BACKEND.md). Re-run with rotate_confirmed = 'yes — allow write' after rotation."
+            exit 1
+          fi
+          echo "Rotation confirmed by ${{ github.actor }}."
+
+      - name: Check required bindings
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DB_DSN: ${{ secrets.SUPABASE_DB_URL }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=0
+          require() {
+            if [ -z "${2:-}" ]; then
+              echo "::error::$1 is not set. $3"
+              missing=1
+            else
+              echo "ok: $1"
+            fi
+          }
+          # Some repository values reach a request body or a Docker Hub URL by
+          # string concatenation, so each one is checked against the shape it is
+          # allowed to have before anything is built from it. This mirrors the
+          # image_tag check below: a repository variable is never trusted to be
+          # well-formed, because a stray quote or slash in one silently changes
+          # the query or the path rather than failing loudly.
+          strict_shape() { # <name> <value> <allowed characters>
+            local v="${2:-}"
+            if [ -z "$v" ]; then
+              echo "::error::$1 is empty."
+              missing=1
+            elif [ "$v" != "$(printf '%s' "$v" | tr -dc "$3")" ] || [ "${#v}" -gt 128 ]; then
+              echo "::error::$1 must contain only [$3] (no quotes, slashes or spaces); refusing before any request is built."
+              missing=1
+            else
+              echo "ok: $1"
+            fi
+          }
+          require "secrets.RAILWAY_TOKEN" "$RAILWAY_TOKEN" "Create the Railway token, then store it from your own terminal: gh secret set RAILWAY_TOKEN --repo hillstreet-ph/open-box (piped over stdin, never pasted into chat)."
+          require "vars.RAILWAY_PROJECT_ID" "$PROJECT_ID" "Create the Railway project first, then: gh variable set RAILWAY_PROJECT_ID --body <project-id> --repo hillstreet-ph/open-box."
+          require "secrets.SUPABASE_DB_URL" "$DB_DSN" "The service needs the scoped database DSN to boot on Postgres."
+          if [ "$MODE" != "verify only (no write)" ]; then
+            require "secrets.DOCKERHUB_USERNAME" "$DOCKERHUB_USERNAME" "Needed to publish the channel tag."
+            require "secrets.DOCKERHUB_TOKEN" "$DOCKERHUB_TOKEN" "Needed to publish the channel tag."
+          fi
+          if [ "$PROJECT_ID" = "$RETIRED_ZEABUR_PROJECT_ID" ]; then
+            echo "::error::RAILWAY_PROJECT_ID holds the retired Zeabur project id; refusing."
+            exit 1
+          fi
+          strict_shape "vars.RAILWAY_PROJECT_ID" "$PROJECT_ID" 'A-Za-z0-9._-'
+          strict_shape "vars.DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" 'A-Za-z0-9._-'
+          strict_shape "vars.RAILWAY_CHANNEL_TAG" "$CHANNEL_TAG" 'A-Za-z0-9._+-'
+          [ "$missing" = "0" ] || exit 1
+          echo "Project $PROJECT_ID / environment $ENVIRONMENT_NAME / service $SERVICE_NAME, channel tag $CHANNEL_TAG."
+
+      - name: Resolve the immutable image digest
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_TAG:-}"
+          if [ -z "$tag" ] && [ "$MODE" != "verify only (no write)" ]; then
+            echo "::error::image_tag is required for a write run: it names the immutable build the channel tag will point at."
+            exit 1
+          fi
+          if [ -n "$tag" ]; then
+            if [ "$tag" != "$(printf '%s' "$tag" | tr -dc 'A-Za-z0-9._+-')" ] || [ "${#tag}" -gt 128 ]; then
+              echo "::error::image_tag must be a plain Docker tag (letters, digits, . _ + -)"
+              exit 1
+            fi
+            json=$(curl -fsSL --max-time 20 "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$IMAGE_NAME/tags/$tag")
+            digest=$(echo "$json" | jq -r '.digest // empty')
+            pushed=$(echo "$json" | jq -r '.last_updated // empty')
+            if [ -z "$digest" ]; then
+              echo "::error::$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$tag has no manifest on Docker Hub"
+              exit 1
+            fi
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            echo "Promoting $DOCKERHUB_NAMESPACE/$IMAGE_NAME:$tag"
+            echo "  digest: $digest"
+            echo "  pushed: $pushed"
+          else
+            echo "No image_tag supplied: this run verifies what is already deployed."
+          fi
+
+      - name: Resolve the Railway target (read-only)
+        id: target
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$RAILWAY_TOKEN" > "$RAILWAY_HEADER"
+          chmod 600 "$RAILWAY_HEADER"
+
+          # One helper for every GraphQL call, written once and sourced by the
+          # later steps. The query and variables arrive as function arguments,
+          # the request body is built by jq into a temp file, and the bearer is
+          # read from the header file, so no secret lands in a script body or a
+          # process command line. RAILWAY_QUIET=1 downgrades a GraphQL error to
+          # a plain note, which is how optional fields are probed.
+          cat > /tmp/rw_gql.sh <<'RWEOF'
+          gql() {
+            local query="$1" vars="${2:-}" body err
+            [ -n "$vars" ] || vars='{}'
+            body=$(mktemp) || { echo "::error::mktemp failed" >&2; return 1; }
+            if ! jq -n --arg q "$query" --argjson v "$vars" '{query:$q, variables:$v}' > "$body"; then
+              rm -f "$body"; echo "::error::malformed GraphQL variables" >&2; return 1
+            fi
+            if ! curl -sS --max-time "${RAILWAY_GQL_TIMEOUT:-45}" -X POST "$RAILWAY_API" \
+                 -H 'Content-Type: application/json' \
+                 -H "@${RAILWAY_HEADER:-/tmp/rw.header}" \
+                 --data-binary "@$body" > "$body.resp"; then
+              rm -f "$body" "$body.resp"
+              echo "::error::Railway API request failed (network)" >&2
+              return 1
+            fi
+            rm -f "$body"
+            err=$(jq -r 'if ((.errors // []) | length) > 0 then .errors[0].message else "" end' "$body.resp" 2>/dev/null) \
+              || err='response was not valid JSON'
+            if [ -n "${err:-}" ]; then
+              if [ -n "${RAILWAY_QUIET:-}" ]; then
+                echo "note: Railway API: $err" >&2
+              else
+                echo "::error::Railway API: $err" >&2
+              fi
+              rm -f "$body.resp"; return 1
+            fi
+            cat "$body.resp"
+            rm -f "$body.resp"
+          }
+          RWEOF
+          . /tmp/rw_gql.sh
+
+          # Project name is asserted before anything else: this is the Railway
+          # equivalent of the retired-project guard, and it stops a stale
+          # RAILWAY_PROJECT_ID from pointing at a different workload.
+          gql 'query($id:ID!){project(id:$id){id name}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.project
+          pname=$(jq -r '.data.project.name // empty' /tmp/rw.project)
+          if [ -z "$pname" ]; then
+            echo "::error::project $PROJECT_ID did not resolve. Check vars.RAILWAY_PROJECT_ID and the token scope."
+            exit 1
+          fi
+          echo "Railway project: $pname"
+          if [ "$pname" != "$EXPECTED_PROJECT_NAME" ]; then
+            echo "::error::project $PROJECT_ID is named '$pname', not the expected '$EXPECTED_PROJECT_NAME'. Refusing to write to a project this workflow does not own. Once you have confirmed it is the Open-Box project, set vars.RAILWAY_PROJECT_NAME to its exact name."
+            exit 1
+          fi
+
+          # Environment id by name (Production is the default in a fresh project).
+          gql 'query($id:ID!){project(id:$id){environments(first:20){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.envs
+          env_id=$(jq -r --arg n "$ENVIRONMENT_NAME" '.data.project.environments.edges[].node | select(.name==$n) | .id' /tmp/rw.envs | head -1)
+          if [ -z "$env_id" ]; then
+            echo "environments present: $(jq -r '[.data.project.environments.edges[].node.name] | join(", ")' /tmp/rw.envs)"
+            echo "::error::environment '$ENVIRONMENT_NAME' not found in project $pname. Set vars.RAILWAY_ENVIRONMENT_NAME to one of the names above."
+            exit 1
+          fi
+          echo "environment: $ENVIRONMENT_NAME ($env_id)"
+
+          # Service id by name.
+          gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs
+          svc_id=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs | head -1)
+          echo "services present: $(jq -r '[.data.project.services.edges[].node.name] | join(", ")' /tmp/rw.svcs)"
+          domain=""
+          before_deployment_id=""
+          before_image=""
+          if [ -z "$svc_id" ]; then
+            if [ "$MODE" = "provision and verify" ]; then
+              echo "service '$SERVICE_NAME' does not exist yet; the provision step will create it."
+            else
+              echo "::error::service '$SERVICE_NAME' not found in project $pname. Run this workflow in 'provision and verify' mode once to create it."
+              exit 1
+            fi
+          else
+            echo "service: $SERVICE_NAME ($svc_id)"
+            gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status} healthcheckPath source{ image }}}' \
+              "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" > /tmp/rw.inst
+            echo "current image: $(jq -r '.data.serviceInstance.source.image // "none"' /tmp/rw.inst)"
+            echo "latest deployment: $(jq -r '.data.serviceInstance.latestDeployment | "id=" + (.id // "none") + " status=" + (.status // "none")' /tmp/rw.inst)"
+            echo "healthcheck path: $(jq -r '.data.serviceInstance.healthcheckPath // "none"' /tmp/rw.inst)"
+            before_deployment_id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' /tmp/rw.inst)
+            before_image=$(jq -r '.data.serviceInstance.source.image // ""' /tmp/rw.inst)
+            # The public service domain is the origin this run gates against.
+            # Different plans expose it as a connection list or as a single
+            # generated domain, so probe both before giving up.
+            domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomains(serviceId:$s, environmentId:$e, first:10){edges{node{domain}}}}' \
+              "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" 2>/dev/null \
+              | jq -r '[.data.serviceDomains.edges[].node.domain // empty] | if length>0 then .[0] else "" end' || true)
+            if [ -z "$domain" ]; then
+              domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomain(serviceId:$s, environmentId:$e){domain}}' \
+                "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" 2>/dev/null \
+                | jq -r '.data.serviceDomain.domain // empty' || true)
+            fi
+            echo "discovered service domain: ${domain:-none}"
+          fi
+
+          # An explicit variable always wins over discovery, so a custom domain
+          # or a renamed service can be used without code changes.
+          origin="${ORIGIN_OVERRIDE:-}"
+          origin="${origin:-${domain:-}}"
+          if [ -z "$origin" ] && [ "$MODE" != "provision and verify" ]; then
+            echo "::error::no public domain found on service $SERVICE_NAME and vars.RAILWAY_ORIGIN_URL is empty. Run provision mode, or set vars.RAILWAY_ORIGIN_URL to the https:// URL of the Railway service domain."
+            exit 1
+          fi
+          case "$origin" in
+            http*) ;;
+            "") ;;
+            *) origin="https://$origin" ;;
+          esac
+          echo "origin: ${origin:-<none yet>}"
+          echo "environment_id=$env_id" >> "$GITHUB_OUTPUT"
+          echo "service_id=$svc_id" >> "$GITHUB_OUTPUT"
+          echo "origin_url=$origin" >> "$GITHUB_OUTPUT"
+          echo "before_deployment_id=$before_deployment_id" >> "$GITHUB_OUTPUT"
+          echo "before_image=$before_image" >> "$GITHUB_OUTPUT"
+
+      - name: Capture the current state (rollback reference)
+        id: before
+        env:
+          ORIGIN_URL: ${{ steps.target.outputs.origin_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ORIGIN_URL" ]; then
+            echo "no origin yet — nothing to capture before the first deployment"
+            echo "before_assets=" >> "$GITHUB_OUTPUT"
+            echo "before_version=" >> "$GITHUB_OUTPUT"
+            echo "channel_digest_before=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The origin is exactly what is broken during an outage, so reading it
+          # must never abort the run: the promotion is the recovery action and it
+          # has to be allowed to reach the write step.
+          before_version=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null \
+            | jq -r '.data.version // empty' 2>/dev/null || true)
+          echo "reported before build: ${before_version:-none}"
+          echo "before_version=$before_version" >> "$GITHUB_OUTPUT"
+          before_assets=$(curl -sS --max-time 20 "$ORIGIN_URL/" 2>/dev/null \
+            | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+          echo "before entry assets: ${before_assets:-none}"
+          echo "before_assets=$before_assets" >> "$GITHUB_OUTPUT"
+          # The channel digest before the roll is the rollback reference: a
+          # recovery run re-points the channel tag at it and redeploys.
+          channel_digest_before=$(curl -fsSL --max-time 20 \
+            "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$IMAGE_NAME/tags/$CHANNEL_TAG" 2>/dev/null \
+            | jq -r '.digest // empty' 2>/dev/null || true)
+          echo "channel $CHANNEL_TAG digest before: ${channel_digest_before:-none}"
+          echo "channel_digest_before=$channel_digest_before" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the channel build (Docker Hub manifest copy)
+        if: inputs.mode != 'verify only (no write)'
+        env:
+          EXPECTED_TAG: ${{ steps.image.outputs.tag }}
+          EXPECTED_DIGEST: ${{ steps.image.outputs.digest }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EXPECTED_TAG" ]; then
+            echo "verify-style roll: no new build named, keeping the channel tag where it is."
+            exit 0
+          fi
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin >/dev/null 2>&1 \
+            || { echo "::error::Docker Hub login failed"; exit 1; }
+          echo "docker login ok (user $DOCKERHUB_USERNAME)"
+          # Copy the multi-arch manifest, do not rebuild: the artifact that was
+          # built and scanned in openbox-docker.yml is the artifact that ships.
+          docker buildx create --use --driver docker-container --name openbox-channel >/dev/null 2>&1 || true
+          docker buildx imagetools create \
+            -t "$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG" \
+            "$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$EXPECTED_TAG"
+          # Registry writes are eventually consistent; poll briefly instead of
+          # asserting once and calling a propagation delay a failed promotion.
+          after=""
+          for _ in $(seq 1 12); do
+            after=$(curl -fsSL --max-time 20 \
+              "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$IMAGE_NAME/tags/$CHANNEL_TAG" 2>/dev/null \
+              | jq -r '.digest // empty' 2>/dev/null || true)
+            [ "$after" = "$EXPECTED_DIGEST" ] && break
+            sleep 5
+          done
+          if [ "$after" != "$EXPECTED_DIGEST" ]; then
+            echo "::error::the channel tag $CHANNEL_TAG resolves to ${after:-nothing} but $EXPECTED_TAG is $EXPECTED_DIGEST. The channel does not point at the build this run was told to promote, so Railway would pull something else."
+            exit 1
+          fi
+          echo "channel $CHANNEL_TAG now resolves to $EXPECTED_DIGEST ($EXPECTED_TAG)"
+
+      - name: Provision the service (first run only)
+        if: inputs.mode == 'provision and verify'
+        id: provision
+        env:
+          ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+          SERVICE_ID: ${{ steps.target.outputs.service_id }}
+          DB_DSN: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          . /tmp/rw_gql.sh
+
+          if [ -z "$SERVICE_ID" ]; then
+            # The service is created against the channel tag, not a per-commit
+            # tag: the roll steps repoint the channel, and Railway re-pulls its
+            # digest on every redeploy.
+            vars=$(jq -n --arg p "$PROJECT_ID" --arg e "$ENVIRONMENT_ID" --arg n "$SERVICE_NAME" \
+              --arg img "$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG" \
+              '{input:{projectId:$p, environmentId:$e, name:$n, source:{image:$img}}}')
+            gql 'mutation($input:ServiceCreateInput!){serviceCreate(input:$input)}' "$vars" > /dev/null
+            gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs2
+            SERVICE_ID=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs2 | head -1)
+            if [ -z "$SERVICE_ID" ]; then echo "::error::serviceCreate returned no resolvable service named $SERVICE_NAME"; exit 1; fi
+            echo "created service $SERVICE_NAME ($SERVICE_ID)"
+          else
+            echo "service already exists ($SERVICE_ID); provisioning only fills in what is missing"
+          fi
+          echo "service_id=$SERVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "environment_id=$ENVIRONMENT_ID" >> "$GITHUB_OUTPUT"
+
+          # Runtime configuration. Only key names are printed. RAILWAY_RUN_UID
+          # is required here because the image runs as uid 1001 while Railway
+          # mounts its volume root-owned, so the entrypoint writability check
+          # would otherwise abort the container.
+          stage=$(mktemp -d)
+          printf '%s' "$DB_DSN" > "$stage/DB_DSN"
+          chmod 600 "$stage/DB_DSN"
+          vars=$(jq -n \
+            --arg p "$PROJECT_ID" --arg e "$ENVIRONMENT_ID" --arg s "$SERVICE_ID" \
+            --rawfile dsn "$stage/DB_DSN" --arg site "$SITE_URL" \
+            '{input:{projectId:$p, environmentId:$e, serviceId:$s, replace:false, skipDeploys:true,
+              variables:{
+                SITE_URL:$site, PUBLIC_DOMAIN:($site|sub("^https?://";"")), TZ:"Asia/Manila", UMASK:"022",
+                DB_TYPE:"postgres", DB_TABLE_PREFIX:"x_", DB_DSN:$dsn,
+                RAILWAY_RUN_UID:"0"
+              }}}')
+          echo "variables to upsert: $(jq -r '.input.variables | keys | join(", ")' <<<"$vars")"
+          gql 'mutation($input:VariableCollectionUpsertInput!){variableCollectionUpsert(input:$input)}' "$vars" > /dev/null
+          echo "variables applied (values not printed)"
+          rm -rf "$stage"
+
+          # One volume per service; the app writes config.json and cache here.
+          have=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){volumeCount}}' \
+            "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
+            | jq -r '.data.serviceInstance.volumeCount // 0' || echo 0)
+          if [ "${have:-0}" -ge 1 ] 2>/dev/null; then
+            echo "volume already present ($have)"
+          else
+            vvars=$(jq -n --arg p "$PROJECT_ID" --arg e "$ENVIRONMENT_ID" --arg s "$SERVICE_ID" --arg m "$MOUNT_PATH" \
+              '{input:{projectId:$p, environmentId:$e, serviceId:$s, mountPath:$m}}')
+            if RAILWAY_QUIET=1 gql 'mutation($input:VolumeCreateInput!){volumeCreate(input:$input){id mountPath}}' "$vvars" \
+              | jq -c '.data.volumeCreate'; then
+              echo "volume created at $MOUNT_PATH"
+            else
+              echo "::warning::volumeCreate was rejected. Mount a $MOUNT_PATH volume in the dashboard before the first deploy: config.json and the cache live there."
+            fi
+          fi
+
+          # Healthcheck on /ping, matching the railway.json contract.
+          hvars=$(jq -n --arg s "$SERVICE_ID" --arg e "$ENVIRONMENT_ID" \
+            '{serviceId:$s, environmentId:$e, config:{healthcheckPath:"/ping", healthcheckTimeout:300, restartPolicyType:"ON_FAILURE", restartPolicyMaxRetries:10}}')
+          if RAILWAY_QUIET=1 gql 'mutation($serviceId:ID!,$environmentId:ID!,$config:ServiceInstanceUpdateConfigInput!){serviceInstanceUpdate(serviceId:$serviceId, environmentId:$environmentId, config:$config)}' "$hvars" > /dev/null; then
+            echo "healthcheck configured: /ping"
+          else
+            echo "::warning::healthcheck configuration was rejected by the API; set /ping with a 300s timeout in the dashboard."
+          fi
+
+          # The public service domain is the origin this run gates against.
+          domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomains(serviceId:$s, environmentId:$e, first:10){edges{node{domain}}}}' \
+            "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
+            | jq -r '[.data.serviceDomains.edges[].node.domain // empty] | if length>0 then .[0] else "" end' || true)
+          if [ -z "$domain" ]; then
+            domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomain(serviceId:$s, environmentId:$e){domain}}' \
+              "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
+              | jq -r '.data.serviceDomain.domain // empty' || true)
+          fi
+          if [ -z "$domain" ]; then
+            dvars=$(jq -n --arg s "$SERVICE_ID" --arg e "$ENVIRONMENT_ID" '{input:{serviceId:$s, environmentId:$e}}')
+            gql 'mutation($input:ServiceDomainCreateInput!){serviceDomainCreate(input:$input){domain}}' "$dvars" \
+              | jq -r '.data.serviceDomainCreate.domain // empty' > /tmp/rw.newdom
+            domain=$(cat /tmp/rw.newdom)
+          fi
+          if [ -z "$domain" ]; then
+            echo "::error::no service domain is available on $SERVICE_NAME and serviceDomainCreate returned nothing. Assign a Railway domain, or set vars.RAILWAY_ORIGIN_URL."
+            exit 1
+          fi
+          echo "service domain: $domain"
+          case "$domain" in http*) origin="$domain" ;; *) origin="https://$domain" ;; esac
+          echo "origin_url=$origin" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger the promotion
+        if: inputs.mode != 'verify only (no write)'
+        id: roll
+        env:
+          ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+          BEFORE_DEPLOYMENT_ID: ${{ steps.target.outputs.before_deployment_id }}
+          SERVICE_ID: ${{ steps.provision.outputs.service_id || steps.target.outputs.service_id }}
+          ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.target.outputs.origin_url }}
+        run: |
+          set -euo pipefail
+          [ -n "$SERVICE_ID" ] || { echo "::error::no service id was resolved; cannot trigger a promotion."; exit 1; }
+          . /tmp/rw_gql.sh
+
+          # serviceInstanceRedeploy re-pulls the channel digest, which the
+          # previous step proved is the immutable build being promoted.
+          gql 'mutation($s:ID!,$e:ID!){serviceInstanceRedeploy(serviceId:$s, environmentId:$e)}' \
+            "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" > /dev/null
+          echo "requested a redeploy of service $SERVICE_ID in environment $ENVIRONMENT_ID"
+          sleep 10
+          # The new deployment id is what makes the wait unambiguous: this run
+          # will not accept a status that describes an older deployment.
+          new_id=""
+          for _ in $(seq 1 10); do
+            gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status createdAt}}}' \
+              "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" > /tmp/rw.dep
+            new_id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' /tmp/rw.dep)
+            [ -n "$new_id" ] && [ "$new_id" != "${BEFORE_DEPLOYMENT_ID:-}" ] && break
+            sleep 5
+          done
+          if [ -z "$new_id" ] || [ "$new_id" = "${BEFORE_DEPLOYMENT_ID:-}" ]; then
+            echo "::error::no new deployment appeared for service $SERVICE_ID (latest is still ${new_id:-none}). Railway did not accept the redeploy request."
+            exit 1
+          fi
+          echo "deployment id: $new_id ${BEFORE_DEPLOYMENT_ID:+(replacing $BEFORE_DEPLOYMENT_ID)}"
+          echo "deployment_id=$new_id" >> "$GITHUB_OUTPUT"
+          echo "service_id=$SERVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "origin_url=$ORIGIN_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the deployment to report ready
+        timeout-minutes: 18
+        env:
+          DEPLOYMENT_ID: ${{ steps.roll.outputs.deployment_id }}
+          SERVICE_ID: ${{ steps.roll.outputs.service_id }}
+          ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+          ORIGIN_URL: ${{ steps.roll.outputs.origin_url }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "verify only (no write)" ]; then
+            echo "Verify-only run: the deployment is not re-rolled, so no wait is needed."
+            exit 0
+          fi
+          [ -n "$DEPLOYMENT_ID" ] || { echo "::error::no deployment id was captured; refusing to wait on a deployment this run did not start."; exit 1; }
+          [ -n "$ORIGIN_URL" ] || { echo "::error::no Railway origin URL was resolved; refusing to wait."; exit 1; }
+          . /tmp/rw_gql.sh
+          # Prefer the by-id deployment query. If that API shape is not
+          # available on this plan, fall back to the service instance's latest
+          # deployment and only accept it when the id matches this run's.
+          read_status() {
+            local resp id
+            STATUS=""
+            MSG=""
+            if resp=$(RAILWAY_QUIET=1 gql 'query($id:ID!){deployment(id:$id){status message}}' "{\"id\":\"$DEPLOYMENT_ID\"}" 2>/dev/null); then
+              STATUS=$(jq -r '.data.deployment.status // ""' <<<"$resp")
+              MSG=$(jq -r '.data.deployment.message // ""' <<<"$resp")
+              return 0
+            fi
+            if resp=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status message}}}' \
+              "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null); then
+              id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' <<<"$resp")
+              if [ "$id" = "$DEPLOYMENT_ID" ]; then
+                STATUS=$(jq -r '.data.serviceInstance.latestDeployment.status // ""' <<<"$resp")
+                MSG=$(jq -r '.data.serviceInstance.latestDeployment.message // ""' <<<"$resp")
+              else
+                MSG="latest deployment is $id, not this run's $DEPLOYMENT_ID"
+              fi
+              return 0
+            fi
+            MSG="Railway status query unavailable"
+            return 1
+          }
+          STATUS=""
+          MSG=""
+          # The deadline and poll interval are tunable so an operator can widen
+          # them for a cold first boot without editing the workflow; the harness
+          # drives the same code path on a short deadline.
+          ready_deadline="${RAILWAY_READY_DEADLINE_SEC:-900}"
+          ready_poll="${RAILWAY_READY_POLL_SEC:-20}"
+          deadline=$(( $(date +%s) + ready_deadline ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            read_status || true
+            served=$(curl -sS --max-time 15 "$ORIGIN_URL/" 2>/dev/null \
+              | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+            echo "$(date -u +%H:%M:%S) deployment=${STATUS:-unknown} ${MSG:+($MSG)} serving=${served:-nothing}"
+            case "$STATUS" in
+              FAILED|CRASHED|REMOVED)
+                echo "::error::Railway reported $STATUS for deployment $DEPLOYMENT_ID (${MSG:-no message}). The gate has not passed; roll the channel tag back to the digest recorded in the summary."
+                exit 1 ;;
+              SUCCESS|ACTIVE)
+                # SUCCESS alone is not proof: the entry asset must actually be
+                # at the origin, otherwise the container is up but not serving.
+                if [ -z "$EXPECTED_FRONTEND_ASSET" ]; then
+                  if [ -n "$served" ]; then
+                    echo "deployment $STATUS with $served served and no named bundle to wait for"
+                    exit 0
+                  fi
+                  echo "deployment reported $STATUS but the origin serves no entry asset; keep polling"
+                else
+                  case " $served " in
+                    *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                      echo "deployment $STATUS and the origin serves the expected $EXPECTED_FRONTEND_ASSET"
+                      exit 0 ;;
+                    *) echo "deployment reported $STATUS but $EXPECTED_FRONTEND_ASSET is not served yet (serving ${served:-nothing}); keep polling" ;;
+                  esac
+                fi ;;
+            esac
+            sleep "$ready_poll"
+          done
+          echo "::error::the Railway deployment never reached a serving state within ${ready_deadline}s (deployment id $DEPLOYMENT_ID, last status ${STATUS:-unknown})."
+          echo "Inspect the Railway deployment log for service $SERVICE_ID in environment $ENVIRONMENT_ID."
+          exit 1
+
+      - name: Production gate — health, PAT routes, database-backed reads, storage, TLS
+        env:
+          ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.roll.outputs.origin_url || steps.target.outputs.origin_url }}
+          EXPECTED_TAG: ${{ steps.image.outputs.tag }}
+          BEFORE_VERSION: ${{ steps.before.outputs.before_version }}
+          BEFORE_ASSETS: ${{ steps.before.outputs.before_assets }}
+          EXPECTED_FRONTEND_ASSET: ${{ inputs.expected_frontend_asset }}
+          EXPECTED_SITE_NAME: ${{ inputs.expected_site_name }}
+          VERIFY_ONLY: ${{ inputs.mode == 'verify only (no write)' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::production gate failed: $1"; exit 1; }
+          [ -n "$ORIGIN_URL" ] || fail "no Railway origin URL was resolved"
+          echo "gating origin: $ORIGIN_URL"
+
+          # Health of the container itself, straight from the service domain:
+          # this bypasses the Cloudflare front door, so a failure here is
+          # Railway's, not the Worker's.
+          code=$(curl -sS -o /tmp/ping -w "%{http_code}" --max-time 20 "$ORIGIN_URL/ping") || fail "railway /ping unreachable"
+          [ "$code" = "200" ] && [ "$(cat /tmp/ping)" = "pong" ] || fail "railway /ping did not return pong (HTTP $code)"
+
+          # A PAT-shaped bearer must be answered by the token middleware, not by
+          # the legacy session parser. Old binaries reply "token is invalidated";
+          # the scoped-token build replies "Invalid or expired access token".
+          pat_probe=$(curl -fsS --max-time 20 -X POST "$ORIGIN_URL/api/fs/list" \
+            -H 'Authorization: obk_gatecheck' -H 'Content-Type: application/json' \
+            -d '{"path":"/","page_number":1,"page_size":1}' || true)
+          echo "PAT discriminator reply: ${pat_probe:-<non-200>}"
+          case "$pat_probe" in
+            *"Invalid or expired access token"*) ;;
+            *"token is invalidated"*) fail "the running binary predates scoped personal access tokens" ;;
+            *) fail "unexpected PAT discriminator reply" ;;
+          esac
+
+          # Unmatched /api paths fall through to the SPA, so a JSON answer proves
+          # the token routes exist.
+          tok_json=$(curl -sS --max-time 20 "$ORIGIN_URL/api/me/token/list" -H 'Authorization: obk_gatecheck' || true)
+          case "$tok_json" in
+            *"<html"*|*"<!DOCTYPE"*) fail "/api/me/token/list is not routed (SPA fallback)" ;;
+            '{"code"'*) ;;
+            *) fail "unexpected /api/me/token/list reply: ${tok_json:0:120}" ;;
+          esac
+
+          # Database-backed settings on the fresh runtime. This is the check that
+          # distinguishes a service reading the shared Postgres from one that
+          # booted a local database on the new volume: site_name is a row.
+          origin_settings=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null || true)
+          [ -n "$origin_settings" ] || fail "the Railway origin did not answer /api/public/settings"
+          site_name=$(echo "$origin_settings" | jq -r '.data.site_name // empty')
+          echo "origin site_name: ${site_name:-none}"
+          echo "origin version stamp: $(echo "$origin_settings" | jq -r '.data.version // "none"')"
+          if [ -n "$EXPECTED_SITE_NAME" ]; then
+            [ "$site_name" = "$EXPECTED_SITE_NAME" ] \
+              || fail "the origin reports site_name='${site_name:-none}' instead of '$EXPECTED_SITE_NAME': this runtime is not reading the production database"
+          fi
+
+          served=$(curl -sS --max-time 20 "$ORIGIN_URL/" 2>/dev/null \
+            | grep -oE '/assets/index[A-Za-z0-9._-]*\.js' | sort -u | paste -sd' ' - || true)
+          echo "origin entry assets: ${served:-none}"
+          if [ "$VERIFY_ONLY" = "true" ]; then
+            [ -n "$served" ] || fail "the origin serves no frontend entry asset"
+            echo "verify-only run: served assets recorded, not compared ($served)"
+          else
+            [ -n "$served" ] || fail "the origin serves no frontend entry asset; the promoted container is not answering"
+            if [ -n "$BEFORE_ASSETS" ] && [ "$served" = "$BEFORE_ASSETS" ]; then
+              # Unchanged bytes are only a verdict when a named build can settle
+              # it: a backend-only promotion legitimately re-serves the same
+              # frontend bundle.
+              if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+                case " $served " in
+                  *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*)
+                    echo "::warning::the served bundle is unchanged and already is $EXPECTED_FRONTEND_ASSET — this run proves the frontend identity but not a container roll." ;;
+                  *)
+                    fail "the origin still serves the pre-promotion bundle ($served) instead of $EXPECTED_FRONTEND_ASSET; the promotion did not roll the container" ;;
+                esac
+              else
+                echo "::warning::the served bundle is unchanged ($served) and no expected_frontend_asset was supplied, so assets alone cannot prove a roll."
+              fi
+            fi
+          fi
+
+          if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+            case " $served " in
+              *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*) echo "the Railway origin serves the expected build" ;;
+              *) fail "the Railway origin does not serve $EXPECTED_FRONTEND_ASSET (serving ${served:-nothing})" ;;
+            esac
+          elif [ "$VERIFY_ONLY" = "false" ]; then
+            echo "::warning::expected_frontend_asset was left empty, so the served bundle was compared to the pre-promotion one but not to a named build."
+          fi
+
+          # TLS on the Railway hop.
+          tls=$(curl -sS -o /dev/null -w "%{ssl_verify_result}" --max-time 20 "$ORIGIN_URL/ping")
+          [ "$tls" = "0" ] || fail "Railway TLS verification returned $tls"
+
+          # The edge is the Cloudflare Worker front door. It only answers once
+          # its ORIGIN_URL binding is repointed at Railway and redeployed, so a
+          # failure here names the remaining cutover step instead of looking
+          # like an application defect.
+          edge_fail=""
+          settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings" || true)
+          if [ -z "$settings" ]; then
+            edge_fail="the edge did not answer $SITE_URL/api/public/settings"
+          elif ! echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null; then
+            edge_fail="the public settings payload at the edge is empty"
+          else
+            echo "edge version stamp: $(echo "$settings" | jq -r '.data.version // "none"') (recorded only — this shared row is rewritten by any service on the same database)"
+            ls_json=$(curl -sS --max-time 20 -X POST "$SITE_URL/api/fs/list" -H 'Content-Type: application/json' -d '{"path":"/"}' || true)
+            # Read the code with jq rather than a byte prefix: the reply is
+            # compact today, but a proxy that reformats JSON must not turn a
+            # passing deployment into a "unexpected reply" failure.
+            ls_code=$(echo "$ls_json" | jq -r '.code // "none"' 2>/dev/null || echo "none")
+            case "$ls_code" in
+              200) ;;
+              401|403) echo "listing requires auth in this deployment; recorded as expected" ;;
+              none) edge_fail="the edge /api/fs/list reply is not JSON: ${ls_json:0:120}" ;;
+              *) edge_fail="unexpected edge /api/fs/list reply code=$ls_code: ${ls_json:0:120}" ;;
+            esac
+            tls_edge=$(curl -sS -o /dev/null -w "%{ssl_verify_result}" --max-time 20 "$SITE_URL/ping")
+            [ "$tls_edge" = "0" ] || edge_fail="edge TLS verification returned $tls_edge"
+            if [ -n "$EXPECTED_FRONTEND_ASSET" ]; then
+              edge_assets=$(curl -sS --max-time 20 "$SITE_URL/" \
+                | grep -oE "/assets/index[A-Za-z0-9._-]*\.js" | sort -u | paste -sd' ' - || true)
+              echo "edge entry assets: ${edge_assets:-none}"
+              case " $edge_assets " in
+                *" $EXPECTED_FRONTEND_ASSET "*|*"/$EXPECTED_FRONTEND_ASSET "*) ;;
+                *) edge_fail="the edge does not serve $EXPECTED_FRONTEND_ASSET (serving ${edge_assets:-nothing})" ;;
+              esac
+            fi
+          fi
+          if [ -n "$edge_fail" ]; then
+            fail "$edge_fail — if every Railway check above passed, the remaining work is the cutover: point the open-box-gateway ORIGIN_URL binding at $ORIGIN_URL and run npx wrangler deploy (deploy/railway/README.md step 5)."
+          fi
+
+          echo "Production gate passed${EXPECTED_TAG:+ for $EXPECTED_TAG} on the Railway runtime."
+
+      - name: Report the running artifact
+        if: always()
+        env:
+          ORIGIN_URL: ${{ steps.provision.outputs.origin_url || steps.roll.outputs.origin_url || steps.target.outputs.origin_url }}
+          SERVICE_ID: ${{ steps.provision.outputs.service_id || steps.target.outputs.service_id }}
+          ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+          DEPLOYMENT_ID: ${{ steps.roll.outputs.deployment_id }}
+          CHANNEL_DIGEST_BEFORE: ${{ steps.before.outputs.channel_digest_before }}
+        run: |
+          set -uo pipefail
+          after=$(curl -sS --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null \
+            | jq -r '.data.version // "unreachable"' 2>/dev/null || echo unreachable)
+          channel_after=$(curl -fsSL --max-time 20 \
+            "https://hub.docker.com/v2/repositories/$DOCKERHUB_NAMESPACE/$IMAGE_NAME/tags/$CHANNEL_TAG" 2>/dev/null \
+            | jq -r '.digest // empty' 2>/dev/null || echo "")
+          {
+            echo "### Open-Box Railway promotion report"
+            echo "- mode: \`${{ inputs.mode }}\`"
+            echo "- requested build: \`${{ steps.image.outputs.tag }}\` (\`${{ steps.image.outputs.digest }}\`)"
+            echo "- channel: \`$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG\` -> \`${channel_after:-unknown}\`"
+            echo "- project: \`$PROJECT_ID\` / environment \`${ENVIRONMENT_ID:-none}\` / service \`${SERVICE_ID:-none}\`"
+            echo "- deployment: \`${DEPLOYMENT_ID:-none}\`"
+            echo "- origin: \`${ORIGIN_URL:-none}\`"
+            echo "- build before: \`${{ steps.before.outputs.before_version }}\` / after: \`${after}\`"
+            echo "- assets before: \`${{ steps.before.outputs.before_assets }}\`"
+            echo "- channel digest before this run: \`${CHANNEL_DIGEST_BEFORE:-none}\`"
+            if [ "${{ job.status }}" != "success" ] && [ -n "${CHANNEL_DIGEST_BEFORE:-}" ]; then
+              echo "- rollback: re-publish the channel tag at the previous digest, then re-run in 'promote and verify' mode:"
+              echo "  \`docker buildx imagetools create -t $DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG $DOCKERHUB_NAMESPACE/$IMAGE_NAME@$CHANNEL_DIGEST_BEFORE\`"
+              echo "  (keep the volume mounted at \`$MOUNT_PATH\`; it holds runtime state)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clear Railway credential files
+        if: always()
+        run: |
+          set -uo pipefail
+          rm -f /tmp/rw.token /tmp/rw.header /tmp/rw_gql.sh \
+            /tmp/rw.project /tmp/rw.envs /tmp/rw.svcs /tmp/rw.svcs2 /tmp/rw.inst \
+            /tmp/rw.dom /tmp/rw.dom2 /tmp/rw.newdom /tmp/rw.vol /tmp/rw.dep /tmp/ping
+          echo "temporary Railway credential and response files removed"

@@ -30,7 +30,7 @@ The Cloudflare gateway serves the consent screen at `/oauth/consent`. It require
 
 ## Configure the Open-Box backend
 
-Set these backend environment variables in Zeabur (use the project URL already configured in Supabase; do not put the database password or service-role key in this integration):
+Set these backend environment variables in the Railway service variable collection — `openbox-deploy-railway.yml` writes the base set, so add these through Railway or extend that workflow's variable list rather than editing `config.json` in the volume (use the project URL already configured in Supabase; do not put the database password or service-role key in this integration):
 
 ```env
 MCP_ENABLE=true

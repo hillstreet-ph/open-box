@@ -1,5 +1,10 @@
 name: Open-Box Zeabur Diagnostics (read-only)
 
+# RETIRED PLATFORM, still useful as evidence: Zeabur stopped serving the
+# production origin on 2026-11-02 and the runtime moved to Railway (issue #28,
+# deploy/railway/README.md). This workflow only reads, so it remains a way to
+# prove what the old platform did to the shared database row.
+
 # Read-only inspection of what the production Zeabur service actually is and
 # what artifact it builds. Added because the promotion run failed on a null
 # `service get` and because the service rebuilds itself without any action

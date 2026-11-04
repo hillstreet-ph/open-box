@@ -17,7 +17,9 @@ does not silently create, merge, or replace Open-Box accounts.
 1. Add the exact production URL `https://<open-box-domain>/auth/callback` to the
    Supabase Auth redirect allow list.
 2. From `deploy/cloudflare`, install dependencies and run `npm test`.
-3. Set `ORIGIN_URL` in `wrangler.toml` to the active Railway or Zeabur origin.
+3. Set `ORIGIN_URL` in `wrangler.toml` to the active Railway service domain (see
+   [the Railway runbook](../../deploy/railway/README.md) step 5). The value shipped
+   today is the retired Zeabur origin, which is why the site is down.
 4. Run `wrangler secret put SUPABASE_PUBLISHABLE_KEY`.
 5. Deploy the Worker and bind the production custom domain.
 6. Test `/auth/login`, `/auth/me`, upload, download, WebDAV, and range requests.
