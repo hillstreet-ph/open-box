@@ -2,7 +2,7 @@
 
 Verified 2026-10-10. Public application: https://open-box.space.
 
-**Read this first (2026-11-07):** the runtime moves off Zeabur to Railway, and
+**Read this first (2026-11-08):** the runtime moves off Zeabur to Railway, and
 `open-box.space` is **down** right now — the Cloudflare Worker's `ORIGIN_URL` still
 names the retired Zeabur host. Everything from line 5 down to the
 "Frontend channel fixed" section is the Zeabur-era record — accurate as history,
@@ -10,18 +10,29 @@ not as current state. The delivery path is complete in code: the deploy workflow
 provisions the Railway service, promotes the image, gates the origin, repoints the
 Worker, and gates the public edge, in that order.
 
-`secrets.RAILWAY_TOKEN` is now present, and a dispatch reaches Railway: run
-`42208964445` failed inside the target step, not at the bindings check, with
-`Variable "$id" of type "ID!" used in position expecting type "String!"`. That was
-a defect in the workflow, not a missing credential: every id-ish argument in
-Railway's schema is `String!`, and the mock harness had been written from the same
-assumption as the client, so it agreed with the mistake. All 15 GraphQL documents
-are now taken from the live introspection, checked offline against a checked-in
-contract, and executed against the live API. What remains is a dispatch that
-passes; no production check may be reported as passed until one does. The exact
-remaining gates are in
-[The runtime moved to Railway](#the-runtime-moved-to-railway-2026-11-04-issue-28-reversed)
-and the operational procedure is [deploy/railway/README.md](../../deploy/railway/README.md).
+**Correction (2026-11-08): `secrets.RAILWAY_TOKEN` is present but invalid.** The
+earlier reading of run `42208964445` was wrong. That run failed with
+`Variable "$id" of type "ID!" used in position expecting type "String!"` — a
+GraphQL *document validation* error, which Railway returns independent of token
+validity, so it never proved the credential authenticated. PR #93 fixed all 15
+documents against the live introspection (every id-ish argument is `String!`),
+checked them offline against a checked-in contract, and executed them against the
+live API with the owner's account session; that fix is correct and merged
+(`4f5b3d3`). Fixing the dialect then unmasked the real blocker: provision run
+`42404349281` failed at the first read-only `project(id:)` query with
+`Not Authorized`, and read-only diagnostic run `42404869922` proved the secret is
+neither a live project token (`projectToken` → `Project Token not found`) nor an
+account token (`me` → `Not Authorized`). The owner's `railway api` account session
+runs the same query fine, so the workflow and the project are sound — only the CI
+credential is bad. The fix is owner-only: mint a fresh project token in the Railway
+dashboard and re-set the secret (procedure in
+[deploy/railway/README.md](../../deploy/railway/README.md) and issue #28). The
+Docker artifact is ready: `hillstreet/open-box:main-4f5b3d3`, manifest
+`sha256:84fa5e79795ec06656b421c1ce99f00673d0237ea58a3aacc85ce0d9f8ee0f67`
+(amd64 + arm64), and the v4.2.11 frontend tarball was verified to serve
+`index-DXZYoYrc.js`. No production check may be reported as passed until a dispatch
+passes; the exact remaining gates are in
+[The runtime moved to Railway](#the-runtime-moved-to-railway-2026-11-04-issue-28-reversed).
 
 As of 2026-10-31 22:20Z the service runs `hillstreet/open-box:main-ef241d2` (manifest digest `sha256:f30d6d4e…`, pushed 22:16:57Z, `Build at: 2026-10-31 21:54:01 +0000`) with the fork frontend's `index-D-qN4CSQ.js`; that is the fifth pass below, and it is the build that carries the scoped-token work, the sign-in attempt window, the LDAP availability rule and the test-suite fixes. The table below is the 10-10 snapshot it grew out of.
 
@@ -543,9 +554,9 @@ days. The workflow behaved correctly — it refused to call that a promotion.
 | Old path | `openbox-deploy.yml` first step now exits 1 naming the Railway workflow; `openbox-zeabur-diagnose.yml` kept as read-only evidence with a retirement header |
 | Edge | `deploy/cloudflare/wrangler.toml` still carries `ORIGIN_URL = "https://open-box-space.zeabur.app"`, annotated as retired. What is actually live is a superset of that file: the Worker has eight bindings (`ai`, one `kv_namespace`, one `secret_text`, four `plain_text`) and a zone route, none of which the committed config describes — see [deploy/CONFIG_MAP.md](../../deploy/CONFIG_MAP.md). This is why the cutover is a settings `PATCH`, not a `wrangler deploy`. |
 | Railway project | `open-box` / `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, environment `production` (`d6643a74-1232-4d7c-8f6c-a6549de452e8` — re-queried 2026-11-05; it is the project's only environment and its lowercase name is what `vars.RAILWAY_ENVIRONMENT_NAME` matches), workspace billing active and under its limit (period usage `$5.68`, estimated `$8.92`, no hard limit set) |
-| Immutable build | `hillstreet/open-box:main-c098aae` at manifest `sha256:c56096c1216992c5a84acdd433c955ef87c04908c76bcc420dd7429992d2ab89`, pushed 2026-11-04T21:45Z. `c098aae..1e7093f` touched no file under `frontend/`, so the expected entry asset for the first promote is `index-DXZYoYrc.js` — the v4.2.11 entry named in the runbook step 3 example. |
+| Immutable build | `hillstreet/open-box:main-4f5b3d3` at manifest `sha256:84fa5e79795ec06656b421c1ce99f00673d0237ea58a3aacc85ce0d9f8ee0f67` (amd64 + arm64), built by run `42402457742` and pushed 2026-11-07T19:00Z. The v4.2.11 frontend tarball was downloaded and verified to serve `index-DXZYoYrc.js` (legacy chunk `index-legacy-Cy8WIxnB.js`), so that is the expected entry asset for the first promote. Supersedes `main-c098aae` (`sha256:c56096c1…`, 2026-11-04). |
 | GitHub bindings | `vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME=production` set; `secrets.SUPABASE_DB_URL`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` already present; `secrets.CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` already present (2026-09-01) and now consumed by the edge step |
-| GitHub binding | `secrets.RAILWAY_TOKEN` is set (the owner stored it from their own terminal; the value is not recorded here) and a dispatch reaches the Railway API with it. API minting remains impossible: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` each return `INTERNAL_SERVER_ERROR "Not Authorized"` against an authenticated, project-linked CLI session, so any replacement token also comes from the dashboard. |
+| GitHub binding | `secrets.RAILWAY_TOKEN` is set but **invalid as of 2026-11-08** — diagnostic run `42404869922` returned `Project Token not found` for `projectToken` and `Not Authorized` for `project(id:)`/`me`, so the bearer is neither a live project token nor an account token. The owner must mint a fresh project token in the dashboard and re-set the secret. API minting remains impossible: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` each return `INTERNAL_SERVER_ERROR "Not Authorized"` against an authenticated, project-linked CLI session, so any replacement token also comes from the dashboard. |
 | GraphQL contract | All 15 documents in the workflow declare `String!`, matching the live schema. The read-only ones were executed against `b65f4f52…` / `d6643a74…` and answered at the schema level — the services query returned an empty list, and deliberately bogus ids came back as `Not Authorized` and `Deployment not found` rather than as validation errors. Mutations were validated structurally, not executed. The checked-in record is `deploy/railway/harness/railway_schema_contract.json`, read from introspection on 2026-11-07. |
 | Railway service | does not exist yet — the project returns no services. Provisioning is the workflow's job, not a hand-built service. |
 
@@ -676,8 +687,8 @@ the workflow and that comment together.
 
 ## Remaining rollout gates
 
-- The Zeabur→Railway migration is now the top item, and its remaining gate is a run that passes rather than a credential that is missing. `secrets.RAILWAY_TOKEN` is in place and reaches the API — run `42208964445` failed inside the target step with a schema error, which only happens after authentication succeeds. The GraphQL defect that stopped it is fixed (see [How the workflow is validated without a production target](#how-the-workflow-is-validated-without-a-production-target)), so the next dispatch of runbook step 3 (`provision and verify`) is what creates the service. Step 4 (`promote and verify`) publishes the channel build, redeploys, gates the origin, repoints the Worker and gates the edge, and step 6 verifies. The project currently holds zero services and `hillstreet/open-box:railway` has no manifest on Docker Hub, so the migration has not happened in production; no production check may be reported as passed until a dispatch says so.
-- Workflow dispatch works again. The 422 ("Actions disabled for the account") and the rotation attestation were already resolved, and the billing lock that followed them released at 21:52Z: run `41247679221` promoted `main-ef241d2` and passed the production gate. If runs start going 3-to-5 seconds with no steps again, check `https://github.com/settings/billing` for `hillstreet-ph` before reading anything into the code.
+- The Zeabur→Railway migration is the top item, and its remaining gate is a **valid `secrets.RAILWAY_TOKEN`**, not code. The secret is present but invalid: diagnostic run `42404869922` returned `Project Token not found` (`projectToken`) and `Not Authorized` (`project(id:)`, `me`). The earlier belief that it "reaches the API" came from misreading run `42208964445`'s `ID!`/`String!` error as proof of authentication; that error is GraphQL document validation, independent of token validity. The GraphQL defect itself is fixed (PR #93, see [How the workflow is validated without a production target](#how-the-workflow-is-validated-without-a-production-target)), and the artifact `main-4f5b3d3` is published. Once the owner re-mints a project token and re-sets the secret, runbook step 3 (`provision and verify`) creates the service, step 4 (`promote and verify`) publishes the channel build, redeploys, gates the origin, repoints the Worker and gates the edge, and step 6 verifies. The project holds zero services and `hillstreet/open-box:railway` has no manifest, so the migration has not happened in production; no production check may be reported as passed until a dispatch says so.
+- Workflow dispatch works again (2026-11-08). The 2026-11-07 `422 Actions has been disabled for this repository` was a **fork usage-scale restriction**, not the 2026-10-31 billing lock: sibling repos ran fine, `actions/permissions` still reported `enabled: true`, and the Actions page offered a maintainer re-enable button. The maintainer clicked it and the next dispatch was accepted (Docker run `42402457742`). The earlier billing lock did release at 21:52Z on 2026-10-31 (run `41247679221` promoted `main-ef241d2`); if runs again go 3-to-5 seconds with no steps, check the fork's Actions page for a re-enable banner first, then `https://github.com/settings/billing` for `hillstreet-ph`.
 - Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository. The owner attested rotation for the promotion gate; that attestation is not evidence this repository could verify, and the pasted GitHub PAT in particular should be confirmed revoked at `https://github.com/settings/tokens`.
 - Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (third pass), `main-35a4ce0` (fourth pass), `main-ef241d2` (fifth pass, digest `sha256:f30d6d4e…`), `main-7d238fe` (sixth pass, digest `sha256:5dfc5fdb…`, chi 5.4.0) and `main-7af6579` (seventh pass, digest `sha256:e2bb8b4c…`, frontend `v4.2.10` — the rebuilt console). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. The LDAP row is a stored setting and is unchanged: the production database still holds `ldap_login_enabled = 'true'` with an empty `ldap_server`, and the running binary now publishes `false` while the directory is unusable, which is the behavior the fix was wanted for. **And re-read the stamp before dispatching:** the fifth pass believed its pin had made production immune to `latest`, the sixth found unprompted rolls, and the seventh found that a roll can also *not* happen for half an hour — so read the stamp, and treat the gate as the only delivery path.
 - `OpenList-Frontend` still has no registered `build_rolling.yml`, so the `edge` channel existed only because it was published by hand — and since 2026-11-03 it does not exist at all, because an immutable release cannot be amended and its tag cannot be recreated under the fork's tag-creation rule. The `release docker` path never consulted `edge`, so the merge channel is unaffected: `releases/latest` is the channel, and it currently names `v4.2.11`. **Production does not serve `v4.2.11` — or any frontend — because the origin is down (see the outage section above); delivery of that release is unverified until a promote run passes the asset gate.** What is still unregistered in that fork is CI itself — the next frontend release again has to be packaged and published manually, or the fork's workflow needs registering before it can publish.

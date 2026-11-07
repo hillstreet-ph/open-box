@@ -6,20 +6,29 @@ The workflow that delivers it is
 this file is the operator runbook around it. Read [deploy/PRODUCTION.md](../PRODUCTION.md)
 for the topology and the required runtime variables.
 
-**Status as of 2026-11-07:** the Railway project **exists** (`open-box`,
+**Status as of 2026-11-08:** the Railway project **exists** (`open-box`,
 `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, workspace "Kobeplay Workspace", billing
 active and under its limit) and `vars.RAILWAY_PROJECT_ID` plus
-`vars.RAILWAY_ENVIRONMENT_NAME` are set on the repository. `secrets.RAILWAY_TOKEN`
-is set too, and a dispatch reaches the Railway API with it — run `42208964445`
-failed inside the target step with a GraphQL schema error, which only happens
-after authentication succeeds. That error was a defect in this workflow: Railway
-declares every id-ish argument `String!`, not `ID!`, and all 15 documents now
-follow the live schema. The service inside the project still does not exist, so
-step 3 is the next action and nothing here is verified as serving. `open-box.space`
-stays down until it passes: the edge still points at the retired Zeabur origin,
-and both are unreachable (re-checked 2026-11-05 — `https://open-box.space/` times
-out after 15s, and `https://open-box-space.zeabur.app/` times out at the TCP
-connect).
+`vars.RAILWAY_ENVIRONMENT_NAME` are set on the repository. The Docker artifact is
+ready: `hillstreet/open-box:main-4f5b3d3`, manifest
+`sha256:84fa5e79795ec06656b421c1ce99f00673d0237ea58a3aacc85ce0d9f8ee0f67`
+(amd64 + arm64), built by run `42402457742`. **The chain is blocked on an invalid
+`secrets.RAILWAY_TOKEN`.** The earlier claim that "a dispatch reaches the Railway
+API with it" was wrong: run `42208964445`'s `ID!` vs `String!` error was GraphQL
+*document validation*, which Railway returns independent of token validity, so it
+never proved authentication. PR #93 fixed that dialect defect (all 15 documents
+declare `String!`, matching the live schema), and fixing it unmasked the real
+problem: provision run `42404349281` failed at the first read-only `project(id:)`
+query with `Not Authorized`, and read-only diagnostic run `42404869922` proved the
+secret is neither a live project token (`projectToken` → `Project Token not found`)
+nor an account token (`me` → `Not Authorized`). The owner's `railway api` account
+session runs the same query fine, so the workflow and project are sound. **Next
+action is owner-only:** re-mint a project token (section 2) and re-set the secret;
+then step 3 creates the service. Nothing here is verified as serving.
+`open-box.space` stays down until a dispatch passes: the edge still points at the
+retired Zeabur origin, and both are unreachable (re-checked 2026-11-05 —
+`https://open-box.space/` times out after 15s, and
+`https://open-box-space.zeabur.app/` times out at the TCP connect).
 
 ## How a build gets onto the service
 
@@ -88,11 +97,16 @@ volume, healthcheck and domain are configured identically every time.
 
 ## 2. Store the Railway token (human, from your own terminal)
 
-Done on 2026-11-07: `secrets.RAILWAY_TOKEN` is bound and a dispatch authenticates
-with it. The rest of this section is what a replacement token needs. Also already
-bound on 2026-11-04: `secrets.SUPABASE_DB_URL`, `secrets.DOCKERHUB_USERNAME`,
-`secrets.DOCKERHUB_TOKEN`, `vars.RAILWAY_PROJECT_ID` and
-`vars.RAILWAY_ENVIRONMENT_NAME`.
+**Invalid as of 2026-11-08.** `secrets.RAILWAY_TOKEN` was bound on 2026-11-07 but
+diagnostic run `42404869922` proved the value is neither a live project token nor
+an account token: `projectToken` returns "Project Token not found" and every
+other query returns "Not Authorized". The earlier claim that run `42208964445`
+"authenticated" was a misreading — Railway validates GraphQL documents before
+checking credentials, so a schema error never proved auth. The owner must re-mint
+a project token below and re-set the secret. The rest of this section is the
+procedure. Also already bound on 2026-11-04: `secrets.SUPABASE_DB_URL`,
+`secrets.DOCKERHUB_USERNAME`, `secrets.DOCKERHUB_TOKEN`,
+`vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME`.
 
 This is not caution, it is the shape of Railway's API. Probed on 2026-11-05 with
 an authenticated `railway` CLI session, linked to the `open-box` project and its
@@ -146,17 +160,17 @@ Dispatch **`provision and verify`**:
 ```sh
 gh workflow run openbox-deploy-railway.yml --repo hillstreet-ph/open-box \
   -f mode="provision and verify" \
-  -f image_tag=main-c098aae \
+  -f image_tag=main-4f5b3d3 \
   -f expected_frontend_asset=index-DXZYoYrc.js \
   -f "rotate_confirmed=yes — allow write"
 ```
 
-`main-c098aae` (manifest `sha256:c56096c1216992c5a84acdd433c955ef87c04908c76bcc420dd7429992d2ab89`,
-published 2026-11-04T21:45Z, read back from Docker Hub on 2026-11-05) is the
-current build of `main`, and `index-DXZYoYrc.js` is the v4.2.11 entry asset it
-serves — `c098aae..1e7093f` changed no `frontend/` file, so the bundle name
-carries over. Replace both with the values for whatever you are actually
-shipping, and never trust this paragraph over `git log` and the built asset.
+`main-4f5b3d3` (manifest `sha256:84fa5e79795ec06656b421c1ce99f00673d0237ea58a3aacc85ce0d9f8ee0f67`,
+amd64+arm64, built by run `42402457742`, pushed 2026-11-07T19:00Z) is the
+current immutable build of `main`. `index-DXZYoYrc.js` is the v4.2.11 entry
+asset it serves (verified by downloading the release tarball). Replace both
+with the values for whatever you are actually shipping, and never trust this
+paragraph over `git log` and the built asset.
 
 It creates the service pinned to the channel tag, then writes the runtime
 variables (`SITE_URL`, `PUBLIC_DOMAIN`, `TZ`, `UMASK`, `DB_TYPE`,
