@@ -13,8 +13,9 @@ still points at the retired Zeabur origin (`https://open-box-space.zeabur.app`),
 so the public site is down until step 5 of
 [the Railway runbook](railway/README.md) repoints it — which the deploy workflow
 now does itself, as a `PATCH` of the Worker's settings, once the Railway half of
-its gate has passed. That step is merged but has never run against production,
-because it sits behind the one human-only prerequisite: `secrets.RAILWAY_TOKEN`.
+its gate has passed. That step is merged but has never completed against
+production: its first dispatch authenticated successfully and then failed inside
+the workflow on a GraphQL schema mismatch, which is fixed as of 2026-11-07.
 Read the Cloudflare rows below as the verified state as of 2026-11-05, and
 [the production status](../docs/platform/PRODUCTION_STATUS.md) for what is
 verified and what is not.
@@ -24,7 +25,7 @@ verified and what is not.
 | Kind | Name | Purpose |
 |------|------|---------|
 | Actions secret | `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Publish `hillstreet/open-box`; reused by the Railway promotion (same image repository) |
-| Actions secret | `RAILWAY_TOKEN` | Railway API token for `openbox-deploy-railway.yml`. **Not set — the one human-only prerequisite for the whole migration.** Mint it in the Railway dashboard and store it from a terminal with `read -s` — never through a chat transcript or a command line. A dashboard token cannot be minted through the API: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` all answer `INTERNAL_SERVER_ERROR "Not Authorized"` to an authenticated CLI session, linked to the project or not. Prefer a **project token** scoped to `open-box` / `production` over a workspace token — the workspace also holds `open-system` and `TGate Worker`, and `ApiTokenCreateInput` has no expiry or scope field, so a workspace token is permanent and broad. Until it exists, no Railway write can run. |
+| Actions secret | `RAILWAY_TOKEN` | Railway API token for `openbox-deploy-railway.yml`. **Set** (2026-11-07): a dispatch authenticates with it, and the value is not recorded here. A replacement still comes from the Railway dashboard and is stored from a terminal with `read -s` — never through a chat transcript or a command line. It cannot be minted through the API: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` all answer `INTERNAL_SERVER_ERROR "Not Authorized"` to an authenticated CLI session, linked to the project or not. Prefer a **project token** scoped to `open-box` / `production` over a workspace token — the workspace also holds `open-system` and `TGate Worker`, and `ApiTokenCreateInput` has no expiry or scope field, so a workspace token is permanent and broad. |
 | Actions secret | `SUPABASE_DB_URL` | Scoped Postgres DSN consumed by the Railway provisioning step |
 | Actions secret | `ZEABUR_API_TOKEN` | Retired platform; read-only diagnostics only |
 | Actions variable | `RAILWAY_PROJECT_ID` | Set: `b65f4f52-404d-4dcb-be94-14a76f9d55ff` |

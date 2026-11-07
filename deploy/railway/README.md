@@ -6,16 +6,20 @@ The workflow that delivers it is
 this file is the operator runbook around it. Read [deploy/PRODUCTION.md](../PRODUCTION.md)
 for the topology and the required runtime variables.
 
-**Status as of 2026-11-05:** the Railway project **exists** (`open-box`,
+**Status as of 2026-11-07:** the Railway project **exists** (`open-box`,
 `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, workspace "Kobeplay Workspace", billing
 active and under its limit) and `vars.RAILWAY_PROJECT_ID` plus
-`vars.RAILWAY_ENVIRONMENT_NAME` are set on the repository. The service inside it
-does not exist yet, and `secrets.RAILWAY_TOKEN` is not set — CI cannot write to
-Railway until you add that token (step 2). Until then `open-box.space` stays
-down: the edge still points at the retired Zeabur origin, and both are unreachable
-(re-checked 2026-11-05 — `https://open-box.space/` times out after 15s, and
-`https://open-box-space.zeabur.app/` times out at the TCP connect). Steps 3
-onward are blocked on that one credential; nothing here is verified as serving.
+`vars.RAILWAY_ENVIRONMENT_NAME` are set on the repository. `secrets.RAILWAY_TOKEN`
+is set too, and a dispatch reaches the Railway API with it — run `42208964445`
+failed inside the target step with a GraphQL schema error, which only happens
+after authentication succeeds. That error was a defect in this workflow: Railway
+declares every id-ish argument `String!`, not `ID!`, and all 15 documents now
+follow the live schema. The service inside the project still does not exist, so
+step 3 is the next action and nothing here is verified as serving. `open-box.space`
+stays down until it passes: the edge still points at the retired Zeabur origin,
+and both are unreachable (re-checked 2026-11-05 — `https://open-box.space/` times
+out after 15s, and `https://open-box-space.zeabur.app/` times out at the TCP
+connect).
 
 ## How a build gets onto the service
 
@@ -84,10 +88,11 @@ volume, healthcheck and domain are configured identically every time.
 
 ## 2. Store the Railway token (human, from your own terminal)
 
-Already bound on 2026-11-04: `secrets.SUPABASE_DB_URL`, `secrets.DOCKERHUB_USERNAME`,
+Done on 2026-11-07: `secrets.RAILWAY_TOKEN` is bound and a dispatch authenticates
+with it. The rest of this section is what a replacement token needs. Also already
+bound on 2026-11-04: `secrets.SUPABASE_DB_URL`, `secrets.DOCKERHUB_USERNAME`,
 `secrets.DOCKERHUB_TOKEN`, `vars.RAILWAY_PROJECT_ID` and
-`vars.RAILWAY_ENVIRONMENT_NAME`. The one binding that no agent can create is
-`secrets.RAILWAY_TOKEN`.
+`vars.RAILWAY_ENVIRONMENT_NAME`.
 
 This is not caution, it is the shape of Railway's API. Probed on 2026-11-05 with
 an authenticated `railway` CLI session, linked to the `open-box` project and its

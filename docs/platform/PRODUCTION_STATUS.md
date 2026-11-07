@@ -2,16 +2,24 @@
 
 Verified 2026-10-10. Public application: https://open-box.space.
 
-**Read this first (2026-11-05):** the runtime moves off Zeabur to Railway, and
+**Read this first (2026-11-07):** the runtime moves off Zeabur to Railway, and
 `open-box.space` is **down** right now — the Cloudflare Worker's `ORIGIN_URL` still
 names the retired Zeabur host. Everything from line 5 down to the
 "Frontend channel fixed" section is the Zeabur-era record — accurate as history,
-not as current state. As of this pass the delivery path is complete in code: the
-deploy workflow provisions the Railway service, promotes the image, gates the
-origin, repoints the Worker, and gates the public edge, in that order. What it
-cannot do is start: `secrets.RAILWAY_TOKEN` does not exist and cannot be minted by
-any agent, so the whole run is blocked on one human step. The exact remaining
-gates are in
+not as current state. The delivery path is complete in code: the deploy workflow
+provisions the Railway service, promotes the image, gates the origin, repoints the
+Worker, and gates the public edge, in that order.
+
+`secrets.RAILWAY_TOKEN` is now present, and a dispatch reaches Railway: run
+`42208964445` failed inside the target step, not at the bindings check, with
+`Variable "$id" of type "ID!" used in position expecting type "String!"`. That was
+a defect in the workflow, not a missing credential: every id-ish argument in
+Railway's schema is `String!`, and the mock harness had been written from the same
+assumption as the client, so it agreed with the mistake. All 15 GraphQL documents
+are now taken from the live introspection, checked offline against a checked-in
+contract, and executed against the live API. What remains is a dispatch that
+passes; no production check may be reported as passed until one does. The exact
+remaining gates are in
 [The runtime moved to Railway](#the-runtime-moved-to-railway-2026-11-04-issue-28-reversed)
 and the operational procedure is [deploy/railway/README.md](../../deploy/railway/README.md).
 
@@ -537,8 +545,9 @@ days. The workflow behaved correctly — it refused to call that a promotion.
 | Railway project | `open-box` / `b65f4f52-404d-4dcb-be94-14a76f9d55ff`, environment `production` (`d6643a74-1232-4d7c-8f6c-a6549de452e8` — re-queried 2026-11-05; it is the project's only environment and its lowercase name is what `vars.RAILWAY_ENVIRONMENT_NAME` matches), workspace billing active and under its limit (period usage `$5.68`, estimated `$8.92`, no hard limit set) |
 | Immutable build | `hillstreet/open-box:main-c098aae` at manifest `sha256:c56096c1216992c5a84acdd433c955ef87c04908c76bcc420dd7429992d2ab89`, pushed 2026-11-04T21:45Z. `c098aae..1e7093f` touched no file under `frontend/`, so the expected entry asset for the first promote is `index-DXZYoYrc.js` — the v4.2.11 entry named in the runbook step 3 example. |
 | GitHub bindings | `vars.RAILWAY_PROJECT_ID` and `vars.RAILWAY_ENVIRONMENT_NAME=production` set; `secrets.SUPABASE_DB_URL`, `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` already present; `secrets.CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` already present (2026-09-01) and now consumed by the edge step |
-| Missing binding | `secrets.RAILWAY_TOKEN` — minted only in the Railway dashboard; see the runbook step 2 for the stdin-only command. API minting is not possible: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` each return `INTERNAL_SERVER_ERROR "Not Authorized"` against an authenticated, project-linked CLI session. |
-| Railway service | does not exist yet; provisioning is the workflow's job, not a hand-built service |
+| GitHub binding | `secrets.RAILWAY_TOKEN` is set (the owner stored it from their own terminal; the value is not recorded here) and a dispatch reaches the Railway API with it. API minting remains impossible: `apiTokenCreate`, `projectTokenCreate` and `apiTokens` each return `INTERNAL_SERVER_ERROR "Not Authorized"` against an authenticated, project-linked CLI session, so any replacement token also comes from the dashboard. |
+| GraphQL contract | All 15 documents in the workflow declare `String!`, matching the live schema. The read-only ones were executed against `b65f4f52…` / `d6643a74…` and answered at the schema level — the services query returned an empty list, and deliberately bogus ids came back as `Not Authorized` and `Deployment not found` rather than as validation errors. Mutations were validated structurally, not executed. The checked-in record is `deploy/railway/harness/railway_schema_contract.json`, read from introspection on 2026-11-07. |
+| Railway service | does not exist yet — the project returns no services. Provisioning is the workflow's job, not a hand-built service. |
 
 **So: `open-box.space` is still down, and nothing on Railway is verified as
 serving anything.** Production health remains exactly what the outage section
@@ -551,17 +560,28 @@ workflow's own gate is what would have to say otherwise.
 
 ### How the workflow is validated without a production target
 
-Three levels, in increasing strength:
+Four levels, in increasing strength:
 
 1. `ruby -ryaml` parses all three touched workflow files (14 / 9 / 6 steps).
 2. Every extracted `run:` body passes `bash -n`.
-3. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
+3. `python3 deploy/railway/harness/check_railway_schema.py` extracts each
+   `gql '…'` document and checks it against
+   `railway_schema_contract.json` — a subset of the live introspection dump. It
+   rejects an unknown root field, argument or selection, a variable type that is
+   narrower than the argument, a variable used but not declared, and a variable
+   declared but not used. Output: `15 document(s), 0 failing`. This level exists
+   because the two below it could not have caught the defect that broke run
+   `42208964445`: the client and the mock shared the same wrong assumption.
+4. `deploy/railway/harness/run_tests.sh` extracts the shipped step bodies from
    the YAML and executes them against a mock Railway GraphQL API, a mock
-   Open-Box origin and a mock Cloudflare edge — 49 assertions, all passing.
+   Open-Box origin and a mock Cloudflare edge — 50 assertions, all passing.
    Running shipped code rather than a transcription is the point; three of the
    harness's early failures were harness bugs (an unset redirection, a
    non-mutating `gsub`, a `GET /ping` readiness probe against a POST-only mock),
-   which is exactly the class of mistake this structure catches. The edge mock
+   which is exactly the class of mistake this structure catches. The mock now
+   also enforces the two schema rules the old one silently allowed: an `ID!`
+   variable is rejected the way Railway rejects it, and a declared-but-unused
+   variable is refused. The edge mock
    reproduces the `PATCH …/workers/scripts/{name}/settings` semantics that were
    measured against two scratch Workers before this shipped: the request must be
    `multipart/form-data` with a part named `settings`; bindings omitted from the
@@ -656,7 +676,7 @@ the workflow and that comment together.
 
 ## Remaining rollout gates
 
-- The Zeabur→Railway migration is now the top item, and it has exactly one blocker outside this repository: `secrets.RAILWAY_TOKEN`. The owner mints a Railway **project token** for `open-box` / `production` in the dashboard and pipes it straight into `gh secret set` from their own terminal (runbook step 2 has the `read -s` form; the value must not pass through a chat transcript or a command line). Then runbook step 3 (`provision and verify`) creates and checks the service, step 4 (`promote and verify`) publishes the channel build, redeploys, gates the origin, repoints the Worker and gates the edge, and step 6 verifies. Nothing in that sequence has been run against production, so no production check may be reported as passed until a dispatch says so.
+- The Zeabur→Railway migration is now the top item, and its remaining gate is a run that passes rather than a credential that is missing. `secrets.RAILWAY_TOKEN` is in place and reaches the API — run `42208964445` failed inside the target step with a schema error, which only happens after authentication succeeds. The GraphQL defect that stopped it is fixed (see [How the workflow is validated without a production target](#how-the-workflow-is-validated-without-a-production-target)), so the next dispatch of runbook step 3 (`provision and verify`) is what creates the service. Step 4 (`promote and verify`) publishes the channel build, redeploys, gates the origin, repoints the Worker and gates the edge, and step 6 verifies. The project currently holds zero services and `hillstreet/open-box:railway` has no manifest on Docker Hub, so the migration has not happened in production; no production check may be reported as passed until a dispatch says so.
 - Workflow dispatch works again. The 422 ("Actions disabled for the account") and the rotation attestation were already resolved, and the billing lock that followed them released at 21:52Z: run `41247679221` promoted `main-ef241d2` and passed the production gate. If runs start going 3-to-5 seconds with no steps again, check `https://github.com/settings/billing` for `hillstreet-ph` before reading anything into the code.
 - Credential rotation is outstanding and is now the top item. Alongside the historically exposed Supabase, Docker Hub and Zeabur management tokens, values pasted into chat on 2026-10-31 must be rotated: the administrator password (`ADMIN_PASSWORD` / `OPENLIST_ADMIN_PASSWORD`), the database password (`DB_PASS`), and a GitHub personal access token. None of them were used by CI, and none are recorded in this repository. The owner attested rotation for the promotion gate; that attestation is not evidence this repository could verify, and the pasted GitHub PAT in particular should be confirmed revoked at `https://github.com/settings/tokens`.
 - Image build, immutable digest verification and the production rollout are done for `main-a15ceb3` (third pass), `main-35a4ce0` (fourth pass), `main-ef241d2` (fifth pass, digest `sha256:f30d6d4e…`), `main-7d238fe` (sixth pass, digest `sha256:5dfc5fdb…`, chi 5.4.0) and `main-7af6579` (seventh pass, digest `sha256:e2bb8b4c…`, frontend `v4.2.10` — the rebuilt console). Do not treat the embedded `Commit:` value as a repository SHA; it is synthesized by the `Dockerfile` builder fallback — identify an image by its `Build at:` stamp and served asset names. The LDAP row is a stored setting and is unchanged: the production database still holds `ldap_login_enabled = 'true'` with an empty `ldap_server`, and the running binary now publishes `false` while the directory is unusable, which is the behavior the fix was wanted for. **And re-read the stamp before dispatching:** the fifth pass believed its pin had made production immune to `latest`, the sixth found unprompted rolls, and the seventh found that a roll can also *not* happen for half an hour — so read the stamp, and treat the gate as the only delivery path.
