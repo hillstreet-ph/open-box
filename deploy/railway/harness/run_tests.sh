@@ -67,8 +67,9 @@ cat > state_clean.json <<'JSON'
   "environments": [{"id": "env-prod", "name": "Production"}, {"id": "env-prev", "name": "Preview"}],
   "services": [{"id": "svc-old", "name": "open-box", "image": "hillstreet/open-box:railway",
                 "latest_deployment": "dep-old", "status": "SUCCESS",
-                "healthcheckPath": null, "volumeCount": 0,
-                "domains": ["open-box-production.up.railway.app"]}],
+                "healthcheckPath": null,
+                "domains": {"service": ["open-box-production.up.railway.app"], "custom": []}}],
+  "volumes": [],
   "deployments_by_id": {"dep-old": {"status": "SUCCESS"}, "dep-new": {"status": "BUILDING"}},
   "variables": {}
 }
@@ -175,15 +176,24 @@ st=json.load(open(os.environ["RW_MOCK_STATE"])); st["services"]=[]; json.dump(st
 no_domains() {
   python3 -c '
 import json, os
-st=json.load(open(os.environ["RW_MOCK_STATE"])); st["services"][0]["domains"]=[]; json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))'
+st=json.load(open(os.environ["RW_MOCK_STATE"]))
+st["services"][0]["domains"]={"service":[],"custom":[]}
+json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))'
 }
-set_deployment() { # id status [message]
+set_custom_domain() { # hostname
+  python3 -c '
+import json, sys, os
+st=json.load(open(os.environ["RW_MOCK_STATE"]))
+st["services"][0]["domains"]["custom"]=[sys.argv[1]]
+json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))' "$1"
+}
+set_deployment() { # id status [diagnosis]
   python3 -c '
 import json,sys,os
 st=json.load(open(os.environ["RW_MOCK_STATE"]))
 st["services"][0]["latest_deployment"]=sys.argv[1]
 st["services"][0]["status"]=sys.argv[2]
-st["deployments_by_id"][sys.argv[1]]={"status":sys.argv[2],"message":sys.argv[3] if len(sys.argv)>3 else "Deployed"}
+st["deployments_by_id"][sys.argv[1]]={"status":sys.argv[2],"diagnosis":sys.argv[3] if len(sys.argv)>3 else None}
 json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))' "$1" "$2" "${3:-}"
 }
 mark_crashed() {
@@ -191,7 +201,7 @@ mark_crashed() {
 import json, os
 st=json.load(open(os.environ["RW_MOCK_STATE"]))
 st["services"][0]["status"]="CRASHED"
-st["deployments_by_id"]["dep-new"]={"status":"CRASHED","message":"exit code 1"}
+st["deployments_by_id"]["dep-new"]={"status":"CRASHED","diagnosis":"exit code 1"}
 json.dump(st,open(os.environ["RW_MOCK_STATE"],"w"))'
 }
 
@@ -233,6 +243,18 @@ gate_run() { # origin-port [extra env]
     SITE_URL="http://127.0.0.1:$port" "$@"
 }
 
+# T0 — every shipped document still matches the Railway schema
+# The behavioural mock cannot catch a wrong variable type on its own: it was
+# once written from the same assumptions as the client, so 49 green assertions
+# coexisted with a deploy that died on its first request ("$id of type ID! used
+# in position expecting type String!"). This compares the documents to the
+# checked-in contract from Railway's introspection dump.
+if schema_out=$(python3 "$HERE/check_railway_schema.py" "$YAML" 2>&1); then
+  ok "T0 all $(printf '%s\n' "$schema_out" | sed -n 's/^\([0-9]*\) document(s).*/\1/p') shipped GraphQL documents conform to the Railway schema"
+else
+  ko "T0 schema conformance" "$(printf '%s\n' "$schema_out" | head -20 | tr '\n' '|')"
+fi
+
 reset_state
 use_profile existing
 
@@ -263,13 +285,13 @@ if [ "$RC" != 0 ] && has 'someone-elses-app' && has 'Refusing to write'; then
   ok "T3 target refuses to write to a project it does not own"
 else ko "T3 project guard" "$(show)"; fi
 
-# T4 — domain discovery falls back to serviceDomain
-reset_state; use_profile domains_single
+# T4 — the generated service domain outranks a custom domain
+reset_state; use_profile existing; set_custom_domain box.example.com
 run_step "$TGT"
 if [ "$RC" = 0 ] && grep -q '^origin_url=https://open-box-production.up.railway.app$' out.txt \
    && has 'discovered service domain: open-box-production'; then
-  ok "T4 domain discovery falls back to the singular serviceDomain query"
-else ko "T4 fallback" "$(show)"; fi
+  ok "T4 origin discovery prefers the generated service domain over a custom one"
+else ko "T4 domain preference" "$(show) origin=$(grep '^origin_url=' out.txt)"; fi
 
 # T5 — promote mode fails loudly when no origin exists
 reset_state; use_profile no_domain; no_domains
@@ -485,7 +507,7 @@ reset_state; drop_services
 use_profile provision_empty
 run_step "$PRV" SERVICE_ID="" ENVIRONMENT_ID=env-prod
 keys=$(python3 -c 'import json,os;print(",".join(sorted(json.load(open(os.environ["RW_MOCK_STATE"]))["variables"])))')
-mount=$(python3 -c 'import json,os;print(json.load(open(os.environ["RW_MOCK_STATE"]))["services"][0].get("volume_mount"))')
+mount=$(python3 -c 'import json,os;st=json.load(open(os.environ["RW_MOCK_STATE"]));vol=(st.get("volumes") or [{"instances":[]}])[0];print((vol.get("instances") or [{}])[0].get("mountPath",""))')
 hc=$(python3 -c 'import json,os;print(json.load(open(os.environ["RW_MOCK_STATE"]))["services"][0].get("healthcheckPath"))')
 dsn=$(python3 -c 'import json,os;print(json.load(open(os.environ["RW_MOCK_STATE"]))["variables"].get("DB_DSN"))')
 if [ "$RC" = 0 ] && grep -q '^service_id=svc-new$' out.txt && grep -q '^origin_url=https://' out.txt \

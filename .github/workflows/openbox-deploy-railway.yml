@@ -289,7 +289,11 @@ jobs:
           # Project name is asserted before anything else: this is the Railway
           # equivalent of the retired-project guard, and it stops a stale
           # RAILWAY_PROJECT_ID from pointing at a different workload.
-          gql 'query($id:ID!){project(id:$id){id name}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.project
+          # Railway declares every id-ish argument as String!, not ID!. A
+          # mismatched variable type is a whole-operation validation failure,
+          # so the declared types here are copied from the live schema rather
+          # than assumed.
+          gql 'query($id:String!){project(id:$id){id name}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.project
           pname=$(jq -r '.data.project.name // empty' /tmp/rw.project)
           if [ -z "$pname" ]; then
             echo "::error::project $PROJECT_ID did not resolve. Check vars.RAILWAY_PROJECT_ID and the token scope."
@@ -302,7 +306,7 @@ jobs:
           fi
 
           # Environment id by name (Production is the default in a fresh project).
-          gql 'query($id:ID!){project(id:$id){environments(first:20){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.envs
+          gql 'query($id:String!){project(id:$id){environments(first:20){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.envs
           env_id=$(jq -r --arg n "$ENVIRONMENT_NAME" '.data.project.environments.edges[].node | select(.name==$n) | .id' /tmp/rw.envs | head -1)
           if [ -z "$env_id" ]; then
             echo "environments present: $(jq -r '[.data.project.environments.edges[].node.name] | join(", ")' /tmp/rw.envs)"
@@ -312,7 +316,7 @@ jobs:
           echo "environment: $ENVIRONMENT_NAME ($env_id)"
 
           # Service id by name.
-          gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs
+          gql 'query($id:String!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs
           svc_id=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs | head -1)
           echo "services present: $(jq -r '[.data.project.services.edges[].node.name] | join(", ")' /tmp/rw.svcs)"
           domain=""
@@ -327,24 +331,21 @@ jobs:
             fi
           else
             echo "service: $SERVICE_NAME ($svc_id)"
-            gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status} healthcheckPath source{ image }}}' \
+            gql 'query($s:String!,$e:String!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status} healthcheckPath source{ image }}}' \
               "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" > /tmp/rw.inst
             echo "current image: $(jq -r '.data.serviceInstance.source.image // "none"' /tmp/rw.inst)"
             echo "latest deployment: $(jq -r '.data.serviceInstance.latestDeployment | "id=" + (.id // "none") + " status=" + (.status // "none")' /tmp/rw.inst)"
             echo "healthcheck path: $(jq -r '.data.serviceInstance.healthcheckPath // "none"' /tmp/rw.inst)"
             before_deployment_id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' /tmp/rw.inst)
             before_image=$(jq -r '.data.serviceInstance.source.image // ""' /tmp/rw.inst)
-            # The public service domain is the origin this run gates against.
-            # Different plans expose it as a connection list or as a single
-            # generated domain, so probe both before giving up.
-            domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomains(serviceId:$s, environmentId:$e, first:10){edges{node{domain}}}}' \
+            # The public domain is the origin this run gates against. Railway
+            # exposes it on the service instance as `domains`, split into the
+            # generated service domains and any custom domains; both are
+            # absolute hostnames, and the generated one is preferred because it
+            # does not depend on external DNS having propagated.
+            domain=$(RAILWAY_QUIET=1 gql 'query($s:String!,$e:String!){serviceInstance(serviceId:$s, environmentId:$e){domains{serviceDomains{domain} customDomains{domain}}}}' \
               "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" 2>/dev/null \
-              | jq -r '[.data.serviceDomains.edges[].node.domain // empty] | if length>0 then .[0] else "" end' || true)
-            if [ -z "$domain" ]; then
-              domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomain(serviceId:$s, environmentId:$e){domain}}' \
-                "{\"s\":\"$svc_id\",\"e\":\"$env_id\"}" 2>/dev/null \
-                | jq -r '.data.serviceDomain.domain // empty' || true)
-            fi
+              | jq -r '.data.serviceInstance.domains // {} | ([.serviceDomains[]?.domain, .customDomains[]?.domain] | map(select(. != null and . != "")) | if length>0 then .[0] else "" end)' || true)
             echo "discovered service domain: ${domain:-none}"
           fi
 
@@ -452,14 +453,19 @@ jobs:
           if [ -z "$SERVICE_ID" ]; then
             # The service is created against the channel tag, not a per-commit
             # tag: the roll steps repoint the channel, and Railway re-pulls its
-            # digest on every redeploy.
+            # digest on every redeploy. serviceCreate returns the created
+            # Service, so the id comes straight back instead of being looked up
+            # again by name.
             vars=$(jq -n --arg p "$PROJECT_ID" --arg e "$ENVIRONMENT_ID" --arg n "$SERVICE_NAME" \
               --arg img "$DOCKERHUB_NAMESPACE/$IMAGE_NAME:$CHANNEL_TAG" \
               '{input:{projectId:$p, environmentId:$e, name:$n, source:{image:$img}}}')
-            gql 'mutation($input:ServiceCreateInput!){serviceCreate(input:$input)}' "$vars" > /dev/null
-            gql 'query($id:ID!){project(id:$id){services(first:50){edges{node{id name}}}}}' "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" > /tmp/rw.svcs2
-            SERVICE_ID=$(jq -r --arg n "$SERVICE_NAME" '.data.project.services.edges[].node | select(.name==$n) | .id' /tmp/rw.svcs2 | head -1)
-            if [ -z "$SERVICE_ID" ]; then echo "::error::serviceCreate returned no resolvable service named $SERVICE_NAME"; exit 1; fi
+            gql 'mutation($input:ServiceCreateInput!){serviceCreate(input:$input){id name}}' "$vars" > /tmp/rw.created
+            SERVICE_ID=$(jq -r '.data.serviceCreate.id // ""' /tmp/rw.created)
+            created_name=$(jq -r '.data.serviceCreate.name // ""' /tmp/rw.created)
+            if [ -z "$SERVICE_ID" ] || [ "$created_name" != "$SERVICE_NAME" ]; then
+              echo "::error::serviceCreate did not return a service named $SERVICE_NAME (id=${SERVICE_ID:-none}, name=${created_name:-none})"
+              exit 1
+            fi
             echo "created service $SERVICE_NAME ($SERVICE_ID)"
           else
             echo "service already exists ($SERVICE_ID); provisioning only fills in what is missing"
@@ -489,15 +495,26 @@ jobs:
           rm -rf "$stage"
 
           # One volume per service; the app writes config.json and cache here.
-          have=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){volumeCount}}' \
-            "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
-            | jq -r '.data.serviceInstance.volumeCount // 0' || echo 0)
-          if [ "${have:-0}" -ge 1 ] 2>/dev/null; then
-            echo "volume already present ($have)"
+          # Volume has no per-service field and no mountPath: the mount lives on
+          # a VolumeInstance, which carries both the service and the path, so
+          # the existence check walks the project's volumes and filters for an
+          # instance on this service in this environment. The filter is client
+          # side, so the document declares only the variables it uses: Railway
+          # rejects a declared-but-unused variable outright.
+          has_volume() {
+            RAILWAY_QUIET=1 gql 'query($id:String!){project(id:$id){volumes(first:50){edges{node{id volumeInstances(first:50){edges{node{serviceId environmentId mountPath}}}}}}}}' \
+              "$(jq -n --arg id "$PROJECT_ID" '{id:$id}')" 2>/dev/null \
+              | jq -r --arg s "$SERVICE_ID" --arg e "$ENVIRONMENT_ID" \
+                  '[.data.project.volumes.edges[]?.node.volumeInstances.edges[]?.node
+                    | select(.serviceId == $s and .environmentId == $e) | .mountPath][0] // ""' 2>/dev/null
+          }
+          have=$(has_volume || true)
+          if [ -n "${have:-}" ]; then
+            echo "volume already present at $have"
           else
             vvars=$(jq -n --arg p "$PROJECT_ID" --arg e "$ENVIRONMENT_ID" --arg s "$SERVICE_ID" --arg m "$MOUNT_PATH" \
               '{input:{projectId:$p, environmentId:$e, serviceId:$s, mountPath:$m}}')
-            if RAILWAY_QUIET=1 gql 'mutation($input:VolumeCreateInput!){volumeCreate(input:$input){id mountPath}}' "$vvars" \
+            if RAILWAY_QUIET=1 gql 'mutation($input:VolumeCreateInput!){volumeCreate(input:$input){id}}' "$vvars" \
               | jq -c '.data.volumeCreate'; then
               echo "volume created at $MOUNT_PATH"
             else
@@ -505,24 +522,21 @@ jobs:
             fi
           fi
 
-          # Healthcheck on /ping, matching the railway.json contract.
+          # Healthcheck on /ping, matching the railway.json contract. The
+          # settings travel as the `input` object; serviceInstanceUpdate has no
+          # `config` argument.
           hvars=$(jq -n --arg s "$SERVICE_ID" --arg e "$ENVIRONMENT_ID" \
-            '{serviceId:$s, environmentId:$e, config:{healthcheckPath:"/ping", healthcheckTimeout:300, restartPolicyType:"ON_FAILURE", restartPolicyMaxRetries:10}}')
-          if RAILWAY_QUIET=1 gql 'mutation($serviceId:ID!,$environmentId:ID!,$config:ServiceInstanceUpdateConfigInput!){serviceInstanceUpdate(serviceId:$serviceId, environmentId:$environmentId, config:$config)}' "$hvars" > /dev/null; then
+            '{s:$s, e:$e, input:{healthcheckPath:"/ping", healthcheckTimeout:300, restartPolicyType:"ON_FAILURE", restartPolicyMaxRetries:10}}')
+          if RAILWAY_QUIET=1 gql 'mutation($s:String!,$e:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:$input)}' "$hvars" > /dev/null; then
             echo "healthcheck configured: /ping"
           else
             echo "::warning::healthcheck configuration was rejected by the API; set /ping with a 300s timeout in the dashboard."
           fi
 
-          # The public service domain is the origin this run gates against.
-          domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomains(serviceId:$s, environmentId:$e, first:10){edges{node{domain}}}}' \
+          # The public domain is the origin this run gates against.
+          domain=$(RAILWAY_QUIET=1 gql 'query($s:String!,$e:String!){serviceInstance(serviceId:$s, environmentId:$e){domains{serviceDomains{domain} customDomains{domain}}}}' \
             "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
-            | jq -r '[.data.serviceDomains.edges[].node.domain // empty] | if length>0 then .[0] else "" end' || true)
-          if [ -z "$domain" ]; then
-            domain=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceDomain(serviceId:$s, environmentId:$e){domain}}' \
-              "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null \
-              | jq -r '.data.serviceDomain.domain // empty' || true)
-          fi
+            | jq -r '.data.serviceInstance.domains // {} | ([.serviceDomains[]?.domain, .customDomains[]?.domain] | map(select(. != null and . != "")) | if length>0 then .[0] else "" end)' || true)
           if [ -z "$domain" ]; then
             dvars=$(jq -n --arg s "$SERVICE_ID" --arg e "$ENVIRONMENT_ID" '{input:{serviceId:$s, environmentId:$e}}')
             gql 'mutation($input:ServiceDomainCreateInput!){serviceDomainCreate(input:$input){domain}}' "$dvars" \
@@ -552,7 +566,7 @@ jobs:
 
           # serviceInstanceRedeploy re-pulls the channel digest, which the
           # previous step proved is the immutable build being promoted.
-          gql 'mutation($s:ID!,$e:ID!){serviceInstanceRedeploy(serviceId:$s, environmentId:$e)}' \
+          gql 'mutation($s:String!,$e:String!){serviceInstanceRedeploy(serviceId:$s, environmentId:$e)}' \
             "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" > /dev/null
           echo "requested a redeploy of service $SERVICE_ID in environment $ENVIRONMENT_ID"
           sleep 10
@@ -560,7 +574,7 @@ jobs:
           # will not accept a status that describes an older deployment.
           new_id=""
           for _ in $(seq 1 10); do
-            gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status createdAt}}}' \
+            gql 'query($s:String!,$e:String!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status createdAt}}}' \
               "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" > /tmp/rw.dep
             new_id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' /tmp/rw.dep)
             [ -n "$new_id" ] && [ "$new_id" != "${BEFORE_DEPLOYMENT_ID:-}" ] && break
@@ -599,17 +613,17 @@ jobs:
             local resp id
             STATUS=""
             MSG=""
-            if resp=$(RAILWAY_QUIET=1 gql 'query($id:ID!){deployment(id:$id){status message}}' "{\"id\":\"$DEPLOYMENT_ID\"}" 2>/dev/null); then
+            if resp=$(RAILWAY_QUIET=1 gql 'query($id:String!){deployment(id:$id){status diagnosis}}' "{\"id\":\"$DEPLOYMENT_ID\"}" 2>/dev/null); then
               STATUS=$(jq -r '.data.deployment.status // ""' <<<"$resp")
-              MSG=$(jq -r '.data.deployment.message // ""' <<<"$resp")
+              MSG=$(jq -r '.data.deployment.diagnosis // "" | if type=="string" then . else tojson end' <<<"$resp")
               return 0
             fi
-            if resp=$(RAILWAY_QUIET=1 gql 'query($s:ID!,$e:ID!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status message}}}' \
+            if resp=$(RAILWAY_QUIET=1 gql 'query($s:String!,$e:String!){serviceInstance(serviceId:$s, environmentId:$e){latestDeployment{id status diagnosis}}}' \
               "{\"s\":\"$SERVICE_ID\",\"e\":\"$ENVIRONMENT_ID\"}" 2>/dev/null); then
               id=$(jq -r '.data.serviceInstance.latestDeployment.id // ""' <<<"$resp")
               if [ "$id" = "$DEPLOYMENT_ID" ]; then
                 STATUS=$(jq -r '.data.serviceInstance.latestDeployment.status // ""' <<<"$resp")
-                MSG=$(jq -r '.data.serviceInstance.latestDeployment.message // ""' <<<"$resp")
+                MSG=$(jq -r '.data.serviceInstance.latestDeployment.diagnosis // "" | if type=="string" then . else tojson end' <<<"$resp")
               else
                 MSG="latest deployment is $id, not this run's $DEPLOYMENT_ID"
               fi

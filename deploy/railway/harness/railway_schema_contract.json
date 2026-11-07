@@ -1,0 +1,1152 @@
+{
+ "inputs": {
+  "ServiceCreateInput": [
+   "branch",
+   "environmentId",
+   "icon",
+   "name",
+   "projectId",
+   "registryCredentials",
+   "source",
+   "templateId",
+   "templateServiceId",
+   "variables"
+  ],
+  "ServiceDomainCreateInput": [
+   "environmentId",
+   "serviceId",
+   "targetPort"
+  ],
+  "ServiceInstanceUpdateInput": [
+   "autoInstrumentationEnabled",
+   "buildCommand",
+   "builder",
+   "cronSchedule",
+   "dockerfilePath",
+   "drainingSeconds",
+   "healthcheckPath",
+   "healthcheckTimeout",
+   "ipv6EgressEnabled",
+   "multiRegionConfig",
+   "nixpacksPlan",
+   "numReplicas",
+   "overlapSeconds",
+   "preDeployCommand",
+   "preDeployTimeoutSeconds",
+   "railwayConfigFile",
+   "region",
+   "registryCredentials",
+   "restartPolicyMaxRetries",
+   "restartPolicyType",
+   "rootDirectory",
+   "sleepApplication",
+   "source",
+   "startCommand",
+   "tracingEnabled",
+   "watchPatterns"
+  ],
+  "VariableCollectionUpsertInput": [
+   "environmentId",
+   "projectId",
+   "replace",
+   "serviceId",
+   "skipDeploys",
+   "variables"
+  ],
+  "VolumeCreateInput": [
+   "environmentId",
+   "mountPath",
+   "projectId",
+   "region",
+   "serviceId"
+  ]
+ },
+ "note": "Minimal subset of the live Railway schema covering every GraphQL document shipped in .github/workflows/openbox-deploy-railway.yml. Object entries list every field so an unknown selection is caught; roots list only the fields used.",
+ "objects": {
+  "AllDomains": {
+   "customDomains": {
+    "args": {},
+    "type": "[CustomDomain!]!"
+   },
+   "serviceDomains": {
+    "args": {},
+    "type": "[ServiceDomain!]!"
+   }
+  },
+  "CustomDomain": {
+   "cdnMode": {
+    "args": {},
+    "type": "String"
+   },
+   "cnameCheck": {
+    "args": {},
+    "type": "CnameCheck!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "domain": {
+    "args": {},
+    "type": "String!"
+   },
+   "edgeId": {
+    "args": {},
+    "type": "String"
+   },
+   "environmentId": {
+    "args": {},
+    "type": "String!"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "isRailwayDomain": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String"
+   },
+   "serviceId": {
+    "args": {},
+    "type": "String!"
+   },
+   "status": {
+    "args": {},
+    "type": "CustomDomainStatus!"
+   },
+   "syncStatus": {
+    "args": {},
+    "type": "CustomDomainSyncStatus!"
+   },
+   "targetPort": {
+    "args": {},
+    "type": "Int"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime"
+   }
+  },
+  "Deployment": {
+   "canRedeploy": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "canRollback": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "creator": {
+    "args": {},
+    "type": "DeploymentCreator"
+   },
+   "deploymentStopped": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "diagnosis": {
+    "args": {},
+    "type": "DeploymentDiagnosis"
+   },
+   "environment": {
+    "args": {},
+    "type": "Environment!"
+   },
+   "environmentId": {
+    "args": {},
+    "type": "String!"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "instances": {
+    "args": {},
+    "type": "[DeploymentDeploymentInstance!]!"
+   },
+   "isArchived": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "meta": {
+    "args": {},
+    "type": "DeploymentMeta"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String!"
+   },
+   "service": {
+    "args": {},
+    "type": "Service!"
+   },
+   "serviceId": {
+    "args": {},
+    "type": "String"
+   },
+   "snapshotId": {
+    "args": {},
+    "type": "String"
+   },
+   "sockets": {
+    "args": {},
+    "type": "[DeploymentSocket!]!"
+   },
+   "staticUrl": {
+    "args": {},
+    "type": "String"
+   },
+   "status": {
+    "args": {},
+    "type": "DeploymentStatus!"
+   },
+   "statusUpdatedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "suggestAddServiceDomain": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "url": {
+    "args": {},
+    "type": "String"
+   }
+  },
+  "Environment": {
+   "canAccess": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "canvasGroupRefs": {
+    "args": {},
+    "type": "JSON!"
+   },
+   "clearanceCachingTurnedOff": {
+    "args": {},
+    "type": "[String!]!"
+   },
+   "clearanceDefault": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "clearanceDefaultUpdatedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "clearancePropagatedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "clearancePropagationError": {
+    "args": {},
+    "type": "String"
+   },
+   "clearanceServiceCounts": {
+    "args": {},
+    "type": "EnvironmentClearanceServiceCounts!"
+   },
+   "config": {
+    "args": {
+     "decryptVariables": "Boolean"
+    },
+    "type": "EnvironmentConfig!"
+   },
+   "configEtag": {
+    "args": {},
+    "type": "String!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "deploymentTriggers": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "EnvironmentDeploymentTriggersConnection!"
+   },
+   "deployments": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "EnvironmentDeploymentsConnection!"
+   },
+   "iacPartials": {
+    "args": {},
+    "type": "JSON"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "isEphemeral": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "meta": {
+    "args": {},
+    "type": "EnvironmentMeta"
+   },
+   "name": {
+    "args": {},
+    "type": "String!"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String!"
+   },
+   "serviceInstances": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "EnvironmentServiceInstancesConnection!"
+   },
+   "sourceEnvironment": {
+    "args": {},
+    "type": "Environment"
+   },
+   "unmergedChangesCount": {
+    "args": {},
+    "type": "Int"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "variables": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "EnvironmentVariablesConnection!"
+   },
+   "volumeInstances": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "EnvironmentVolumeInstancesConnection!"
+   }
+  },
+  "Project": {
+   "baseEnvironment": {
+    "args": {},
+    "type": "Environment"
+   },
+   "baseEnvironmentId": {
+    "args": {},
+    "type": "String"
+   },
+   "botPrEnvironments": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "buckets": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectBucketsConnection!"
+   },
+   "clearanceDefaultForNewEnvironments": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "clearanceTokens": {
+    "args": {},
+    "type": "[ClearanceToken!]!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "deploymentTriggers": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectDeploymentTriggersConnection!"
+   },
+   "deployments": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectDeploymentsConnection!"
+   },
+   "description": {
+    "args": {},
+    "type": "String"
+   },
+   "environments": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "isEphemeral": "Boolean",
+     "last": "Int",
+     "sort": "SortOrder"
+    },
+    "type": "ProjectEnvironmentsConnection!"
+   },
+   "expiredAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "featureFlags": {
+    "args": {},
+    "type": "[ActiveProjectFeatureFlag!]!"
+   },
+   "focusedPrEnvironments": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "groups": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectGroupsConnection!"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "isPublic": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "isTempProject": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "members": {
+    "args": {},
+    "type": "[ProjectMember!]!"
+   },
+   "name": {
+    "args": {},
+    "type": "String!"
+   },
+   "plugins": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectPluginsConnection!"
+   },
+   "prDeploys": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "primaryEnvironmentId": {
+    "args": {},
+    "type": "String"
+   },
+   "projectPermissions": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectProjectPermissionsConnection!"
+   },
+   "services": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectServicesConnection!"
+   },
+   "subscriptionPlanLimit": {
+    "args": {},
+    "type": "SubscriptionPlanLimit!"
+   },
+   "subscriptionType": {
+    "args": {},
+    "type": "SubscriptionPlanType!"
+   },
+   "team": {
+    "args": {},
+    "type": "Team"
+   },
+   "teamId": {
+    "args": {},
+    "type": "String"
+   },
+   "tracingEnabled": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "tracingSampleRate": {
+    "args": {},
+    "type": "Float"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "viewerRole": {
+    "args": {},
+    "type": "ProjectRole"
+   },
+   "volumes": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ProjectVolumesConnection!"
+   },
+   "workspace": {
+    "args": {},
+    "type": "Workspace"
+   },
+   "workspaceId": {
+    "args": {},
+    "type": "String"
+   }
+  },
+  "ProjectEnvironmentsConnection": {
+   "edges": {
+    "args": {},
+    "type": "[ProjectEnvironmentsConnectionEdge!]!"
+   },
+   "pageInfo": {
+    "args": {},
+    "type": "PageInfo!"
+   }
+  },
+  "ProjectEnvironmentsConnectionEdge": {
+   "cursor": {
+    "args": {},
+    "type": "String!"
+   },
+   "node": {
+    "args": {},
+    "type": "Environment!"
+   }
+  },
+  "ProjectServicesConnection": {
+   "edges": {
+    "args": {},
+    "type": "[ProjectServicesConnectionEdge!]!"
+   },
+   "pageInfo": {
+    "args": {},
+    "type": "PageInfo!"
+   }
+  },
+  "ProjectServicesConnectionEdge": {
+   "cursor": {
+    "args": {},
+    "type": "String!"
+   },
+   "node": {
+    "args": {},
+    "type": "Service!"
+   }
+  },
+  "ProjectVolumesConnection": {
+   "edges": {
+    "args": {},
+    "type": "[ProjectVolumesConnectionEdge!]!"
+   },
+   "pageInfo": {
+    "args": {},
+    "type": "PageInfo!"
+   }
+  },
+  "ProjectVolumesConnectionEdge": {
+   "cursor": {
+    "args": {},
+    "type": "String!"
+   },
+   "node": {
+    "args": {},
+    "type": "Volume!"
+   }
+  },
+  "Service": {
+   "autoInstrumentationEnabled": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "deployments": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ServiceDeploymentsConnection!"
+   },
+   "featureFlags": {
+    "args": {},
+    "type": "[ActiveServiceFeatureFlag!]!"
+   },
+   "groupId": {
+    "args": {},
+    "type": "String"
+   },
+   "hasHiddenRegistryCredentialsFromTemplate": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "icon": {
+    "args": {},
+    "type": "String"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "isRestricted": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "name": {
+    "args": {},
+    "type": "String!"
+   },
+   "project": {
+    "args": {},
+    "type": "Project!"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String!"
+   },
+   "repoTriggers": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ServiceRepoTriggersConnection!"
+   },
+   "serviceInstances": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "ServiceServiceInstancesConnection!"
+   },
+   "templateId": {
+    "args": {},
+    "type": "String"
+   },
+   "templateServiceId": {
+    "args": {},
+    "type": "String"
+   },
+   "templateThreadSlug": {
+    "args": {},
+    "type": "String"
+   },
+   "tracingEnabled": {
+    "args": {},
+    "type": "Boolean"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime!"
+   }
+  },
+  "ServiceDomain": {
+   "cdnMode": {
+    "args": {},
+    "type": "String"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "domain": {
+    "args": {},
+    "type": "String!"
+   },
+   "edgeId": {
+    "args": {},
+    "type": "String"
+   },
+   "environmentId": {
+    "args": {},
+    "type": "String!"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "newDomainName": {
+    "args": {},
+    "type": "String"
+   },
+   "newHostLabel": {
+    "args": {},
+    "type": "String"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String"
+   },
+   "serviceId": {
+    "args": {},
+    "type": "String!"
+   },
+   "suffix": {
+    "args": {},
+    "type": "String"
+   },
+   "syncStatus": {
+    "args": {},
+    "type": "ServiceDomainSyncStatus!"
+   },
+   "targetPort": {
+    "args": {},
+    "type": "Int"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime"
+   }
+  },
+  "ServiceInstance": {
+   "activeDeployments": {
+    "args": {},
+    "type": "[Deployment!]!"
+   },
+   "autoInstrumentationEnabled": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "buildCommand": {
+    "args": {},
+    "type": "String"
+   },
+   "builder": {
+    "args": {},
+    "type": "Builder!"
+   },
+   "clearance": {
+    "args": {},
+    "type": "Boolean"
+   },
+   "clearanceEffective": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "cronSchedule": {
+    "args": {},
+    "type": "String"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "dockerfilePath": {
+    "args": {},
+    "type": "String"
+   },
+   "domains": {
+    "args": {},
+    "type": "AllDomains!"
+   },
+   "drainingSeconds": {
+    "args": {},
+    "type": "Int"
+   },
+   "edgeConfig": {
+    "args": {},
+    "type": "EdgeConfig"
+   },
+   "environmentId": {
+    "args": {},
+    "type": "String!"
+   },
+   "hasEverDeployed": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "healthcheckPath": {
+    "args": {},
+    "type": "String"
+   },
+   "healthcheckTimeout": {
+    "args": {},
+    "type": "Int"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "ipv6EgressEnabled": {
+    "args": {},
+    "type": "Boolean"
+   },
+   "isUpdatable": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "latestDeployment": {
+    "args": {},
+    "type": "Deployment"
+   },
+   "nextCronRunAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "nixpacksPlan": {
+    "args": {},
+    "type": "JSON"
+   },
+   "numReplicas": {
+    "args": {},
+    "type": "Int"
+   },
+   "overlapSeconds": {
+    "args": {},
+    "type": "Int"
+   },
+   "preDeployCommand": {
+    "args": {},
+    "type": "JSON"
+   },
+   "preDeployTimeoutSeconds": {
+    "args": {},
+    "type": "Int"
+   },
+   "railpackInfo": {
+    "args": {},
+    "type": "RailpackInfo"
+   },
+   "railwayConfigFile": {
+    "args": {},
+    "type": "String"
+   },
+   "region": {
+    "args": {},
+    "type": "String"
+   },
+   "resolvedFileConfig": {
+    "args": {},
+    "type": "ResolvedFileConfig"
+   },
+   "restartPolicyMaxRetries": {
+    "args": {},
+    "type": "Int!"
+   },
+   "restartPolicyType": {
+    "args": {},
+    "type": "RestartPolicyType!"
+   },
+   "rootDirectory": {
+    "args": {},
+    "type": "String"
+   },
+   "service": {
+    "args": {},
+    "type": "Service!"
+   },
+   "serviceId": {
+    "args": {},
+    "type": "String!"
+   },
+   "serviceName": {
+    "args": {},
+    "type": "String!"
+   },
+   "sleepApplication": {
+    "args": {},
+    "type": "Boolean"
+   },
+   "source": {
+    "args": {},
+    "type": "ServiceSource"
+   },
+   "startCommand": {
+    "args": {},
+    "type": "String"
+   },
+   "tracingEnabled": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "updatedAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "upstreamUrl": {
+    "args": {},
+    "type": "String"
+   },
+   "watchPatterns": {
+    "args": {},
+    "type": "[String!]!"
+   }
+  },
+  "ServiceSource": {
+   "image": {
+    "args": {},
+    "type": "String"
+   },
+   "repo": {
+    "args": {},
+    "type": "String"
+   }
+  },
+  "Volume": {
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "name": {
+    "args": {},
+    "type": "String!"
+   },
+   "project": {
+    "args": {},
+    "type": "Project!"
+   },
+   "projectId": {
+    "args": {},
+    "type": "String!"
+   },
+   "volumeInstances": {
+    "args": {
+     "after": "String",
+     "before": "String",
+     "first": "Int",
+     "last": "Int"
+    },
+    "type": "VolumeVolumeInstancesConnection!"
+   }
+  },
+  "VolumeInstance": {
+   "createdAt": {
+    "args": {},
+    "type": "DateTime!"
+   },
+   "currentSizeMB": {
+    "args": {},
+    "type": "Float!"
+   },
+   "deletedAt": {
+    "args": {},
+    "type": "DateTime"
+   },
+   "environment": {
+    "args": {},
+    "type": "Environment!"
+   },
+   "environmentId": {
+    "args": {},
+    "type": "String!"
+   },
+   "externalId": {
+    "args": {},
+    "type": "String"
+   },
+   "id": {
+    "args": {},
+    "type": "ID!"
+   },
+   "isPendingDeletion": {
+    "args": {},
+    "type": "Boolean!"
+   },
+   "mountPath": {
+    "args": {},
+    "type": "String!"
+   },
+   "region": {
+    "args": {},
+    "type": "String"
+   },
+   "service": {
+    "args": {},
+    "type": "Service!"
+   },
+   "serviceId": {
+    "args": {},
+    "type": "String"
+   },
+   "sizeMB": {
+    "args": {},
+    "type": "Int!"
+   },
+   "state": {
+    "args": {},
+    "type": "VolumeState"
+   },
+   "volume": {
+    "args": {},
+    "type": "Volume!"
+   },
+   "volumeId": {
+    "args": {},
+    "type": "String!"
+   }
+  },
+  "VolumeVolumeInstancesConnection": {
+   "edges": {
+    "args": {},
+    "type": "[VolumeVolumeInstancesConnectionEdge!]!"
+   },
+   "pageInfo": {
+    "args": {},
+    "type": "PageInfo!"
+   }
+  },
+  "VolumeVolumeInstancesConnectionEdge": {
+   "cursor": {
+    "args": {},
+    "type": "String!"
+   },
+   "node": {
+    "args": {},
+    "type": "VolumeInstance!"
+   }
+  }
+ },
+ "roots": {
+  "Mutation": {
+   "serviceCreate": {
+    "args": {
+     "input": "ServiceCreateInput!"
+    },
+    "type": "Service!"
+   },
+   "serviceDomainCreate": {
+    "args": {
+     "input": "ServiceDomainCreateInput!"
+    },
+    "type": "ServiceDomain!"
+   },
+   "serviceInstanceRedeploy": {
+    "args": {
+     "environmentId": "String!",
+     "serviceId": "String!"
+    },
+    "type": "Boolean!"
+   },
+   "serviceInstanceUpdate": {
+    "args": {
+     "environmentId": "String",
+     "input": "ServiceInstanceUpdateInput!",
+     "serviceId": "String!"
+    },
+    "type": "Boolean!"
+   },
+   "variableCollectionUpsert": {
+    "args": {
+     "input": "VariableCollectionUpsertInput!"
+    },
+    "type": "Boolean!"
+   },
+   "volumeCreate": {
+    "args": {
+     "input": "VolumeCreateInput!"
+    },
+    "type": "Volume!"
+   }
+  },
+  "Query": {
+   "deployment": {
+    "args": {
+     "id": "String!"
+    },
+    "type": "Deployment!"
+   },
+   "project": {
+    "args": {
+     "id": "String!"
+    },
+    "type": "Project!"
+   },
+   "serviceInstance": {
+    "args": {
+     "environmentId": "String!",
+     "serviceId": "String!"
+    },
+    "type": "ServiceInstance!"
+   }
+  }
+ },
+ "source": "railway api schema (introspection), read 2026-11-07"
+}
