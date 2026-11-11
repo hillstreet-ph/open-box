@@ -54,6 +54,12 @@ jobs:
         else . end)
 
     steps:
+      - name: Retired platform guard
+        run: |
+          echo "::error::This workflow targets the retired Zeabur runtime, which stopped serving on 2026-11-02."
+          echo "::error::Production promotion now runs .github/workflows/openbox-deploy-railway.yml"
+          exit 1
+
       - name: Authenticate and install the JSON helper
         run: |
           set -euo pipefail
