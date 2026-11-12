@@ -95,25 +95,31 @@ jobs:
 
       # ── 3. Worker secrets ─────────────────────────────────────────────────
       - name: Set SUPABASE_PUBLISHABLE_KEY secret
-        if: ${{ secrets.SUPABASE_PUBLISHABLE_KEY != '' }}
         working-directory: deploy/cloudflare
         env:
           CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
           CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          if [ -z "${SUPABASE_PUBLISHABLE_KEY:-}" ]; then
+            echo "::notice::SUPABASE_PUBLISHABLE_KEY secret not set — skipping. Add it in GitHub Settings → Secrets."
+            exit 0
+          fi
           echo "$SUPABASE_PUBLISHABLE_KEY" \
             | npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
           echo "SUPABASE_PUBLISHABLE_KEY secret updated."
 
       - name: Set AI_CONFIG_KEY secret
-        if: ${{ secrets.AI_CONFIG_KEY != '' }}
         working-directory: deploy/cloudflare
         env:
           CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
           CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
           AI_CONFIG_KEY: ${{ secrets.AI_CONFIG_KEY }}
         run: |
+          if [ -z "${AI_CONFIG_KEY:-}" ]; then
+            echo "::notice::AI_CONFIG_KEY secret not set — skipping."
+            exit 0
+          fi
           echo "$AI_CONFIG_KEY" \
             | npx wrangler secret put AI_CONFIG_KEY
           echo "AI_CONFIG_KEY secret updated."
