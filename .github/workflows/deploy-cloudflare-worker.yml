@@ -1,0 +1,185 @@
+# Deploy the open-box-gateway Cloudflare Worker.
+#
+# This workflow deploys deploy/cloudflare to Cloudflare Workers and ensures
+# the open-box.space zone route is pointing at the Worker. It runs on every
+# push to main that touches the Worker source, and can be triggered manually.
+#
+# After deployment the CD workflow (openbox-deploy-railway.yml) can PATCH the
+# Worker's ORIGIN_URL binding on each Railway deploy without re-uploading the
+# Worker bundle.
+#
+# Required GitHub secrets:
+#   CLOUDFLARE_API_KEY   – Cloudflare Global API Key
+#   CLOUDFLARE_EMAIL     – Cloudflare account e-mail address
+#
+# Optional GitHub secrets (set once, then managed by wrangler secret put):
+#   SUPABASE_PUBLISHABLE_KEY – Supabase anon/publishable key for the platform
+#                              project (huadtiuuoiriqrjpjxhr). Without it the
+#                              Worker boots but returns 503 gateway_not_configured.
+#   AI_CONFIG_KEY            – 64 base64url chars; encrypts the AI provider key
+#                              stored in the AI_CONFIG KV namespace.
+
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/cloudflare/**'
+  workflow_dispatch:
+    inputs:
+      skip_route:
+        description: Skip zone route setup (useful when route already exists)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CF_API: https://api.cloudflare.com/client/v4
+  WORKER_NAME: open-box-gateway
+  ZONE_NAME: open-box.space
+
+jobs:
+  deploy:
+    name: Deploy open-box-gateway
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 1. Validate credentials ────────────────────────────────────────────
+      - name: Validate Cloudflare credentials
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_KEY:-}" ] || [ -z "${CLOUDFLARE_EMAIL:-}" ]; then
+            echo "::error::secrets.CLOUDFLARE_API_KEY and CLOUDFLARE_EMAIL must be set"
+            exit 1
+          fi
+          printf 'X-Auth-Email: %s\nX-Auth-Key: %s\n' \
+            "$CLOUDFLARE_EMAIL" "$CLOUDFLARE_API_KEY" > /tmp/cf.auth
+          chmod 600 /tmp/cf.auth
+          result=$(curl -fsS --max-time 20 "$CF_API/accounts" -H "@/tmp/cf.auth" 2>&1) || {
+            echo "::error::Cloudflare API request failed: $result"
+            exit 1
+          }
+          count=$(echo "$result" | jq -r '.result | length // 0')
+          if [ "$count" = "0" ]; then
+            echo "::error::Credentials invalid or cannot read accounts"
+            exit 1
+          fi
+          echo "Credentials valid — $count account(s) accessible"
+
+      # ── 2. Deploy Worker bundle ────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: deploy/cloudflare
+        run: npm ci --prefer-offline
+
+      - name: Deploy Worker
+        working-directory: deploy/cloudflare
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+        run: |
+          echo "Deploying $WORKER_NAME ..."
+          npm run deploy
+          echo "Worker deployed."
+
+      # ── 3. Worker secrets ─────────────────────────────────────────────────
+      - name: Set SUPABASE_PUBLISHABLE_KEY secret
+        if: ${{ secrets.SUPABASE_PUBLISHABLE_KEY != '' }}
+        working-directory: deploy/cloudflare
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          echo "$SUPABASE_PUBLISHABLE_KEY" \
+            | npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+          echo "SUPABASE_PUBLISHABLE_KEY secret updated."
+
+      - name: Set AI_CONFIG_KEY secret
+        if: ${{ secrets.AI_CONFIG_KEY != '' }}
+        working-directory: deploy/cloudflare
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+          AI_CONFIG_KEY: ${{ secrets.AI_CONFIG_KEY }}
+        run: |
+          echo "$AI_CONFIG_KEY" \
+            | npx wrangler secret put AI_CONFIG_KEY
+          echo "AI_CONFIG_KEY secret updated."
+
+      # ── 4. Zone route ─────────────────────────────────────────────────────
+      - name: Ensure open-box.space zone route
+        if: ${{ inputs.skip_route != true }}
+        env:
+          CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+        run: |
+          printf 'X-Auth-Email: %s\nX-Auth-Key: %s\n' \
+            "$CLOUDFLARE_EMAIL" "$CLOUDFLARE_API_KEY" > /tmp/cf.auth
+          chmod 600 /tmp/cf.auth
+
+          zone_id=$(curl -fsS --max-time 20 \
+            "$CF_API/zones?name=$ZONE_NAME" \
+            -H "@/tmp/cf.auth" \
+            | jq -r '.result[0].id // empty')
+
+          if [ -z "$zone_id" ]; then
+            echo "::warning::Zone $ZONE_NAME not found in this Cloudflare account — skipping route setup"
+            exit 0
+          fi
+          echo "Zone $ZONE_NAME → $zone_id"
+
+          ROUTE_PATTERN="${ZONE_NAME}/*"
+          existing=$(curl -fsS --max-time 20 \
+            "$CF_API/zones/$zone_id/workers/routes" \
+            -H "@/tmp/cf.auth" \
+            | jq -r --arg p "$ROUTE_PATTERN" --arg w "$WORKER_NAME" \
+              '.result[]? | select(.pattern==$p and .script==$w) | .id // empty')
+
+          if [ -n "$existing" ]; then
+            echo "Route $ROUTE_PATTERN → $WORKER_NAME already exists (id=$existing) — no change needed"
+            exit 0
+          fi
+
+          result=$(curl -fsS --max-time 20 \
+            -X POST "$CF_API/zones/$zone_id/workers/routes" \
+            -H "@/tmp/cf.auth" \
+            -H "Content-Type: application/json" \
+            -d "{\"pattern\":\"$ROUTE_PATTERN\",\"script\":\"$WORKER_NAME\"}")
+          route_id=$(echo "$result" | jq -r '.result.id // empty')
+          if [ -n "$route_id" ]; then
+            echo "Created route $ROUTE_PATTERN → $WORKER_NAME (id=$route_id)"
+          else
+            echo "::error::Failed to create route: $(echo "$result" | jq -c .)"
+            exit 1
+          fi
+
+      # ── 5. Smoke test ─────────────────────────────────────────────────────
+      - name: Smoke-test Worker via open-box.space
+        run: |
+          echo "Probing https://$ZONE_NAME ..."
+          code=$(curl -sS -o /dev/null -w "%{http_code}" \
+            --max-time 25 "https://$ZONE_NAME" 2>/dev/null || echo "000")
+          echo "HTTP $code from https://$ZONE_NAME"
+          case "$code" in
+            200)
+              echo "Worker is live and healthy." ;;
+            503)
+              # 503 is expected until SUPABASE_PUBLISHABLE_KEY is set.
+              echo "::warning::Worker returned 503 — likely missing SUPABASE_PUBLISHABLE_KEY secret. Add it as a GitHub secret and re-run." ;;
+            000)
+              echo "::warning::Could not reach $ZONE_NAME — DNS may not be pointing here yet." ;;
+            *)
+              echo "::warning::Unexpected HTTP $code from https://$ZONE_NAME" ;;
+          esac
