@@ -77,7 +77,7 @@ on:
         type: string
         default: ""
       expected_site_name:
-        description: "site_name the shared database must report, proving Postgres rather than a fresh local database (blank skips)"
+        description: "site_name (or site_title fallback) the shared database must report, proving Postgres rather than a fresh local database (blank skips)"
         required: false
         type: string
         default: "Open-Box"
@@ -719,10 +719,10 @@ jobs:
 
           # Database-backed settings on the fresh runtime. This is the check that
           # distinguishes a service reading the shared Postgres from one that
-          # booted a local database on the new volume: site_name is a row.
+          # booted a local database on the new volume: site_name or site_title is a row.
           origin_settings=$(curl -fsSL --max-time 20 "$ORIGIN_URL/api/public/settings" 2>/dev/null || true)
           [ -n "$origin_settings" ] || fail "the Railway origin did not answer /api/public/settings"
-          site_name=$(echo "$origin_settings" | jq -r '.data.site_name // empty')
+          site_name=$(echo "$origin_settings" | jq -r '(.data.site_name // .data.site_title) // empty')
           echo "origin site_name: ${site_name:-none}"
           echo "origin version stamp: $(echo "$origin_settings" | jq -r '.data.version // "none"')"
           if [ -n "$EXPECTED_SITE_NAME" ]; then
@@ -1057,7 +1057,7 @@ jobs:
           settings=$(curl -fsSL --max-time 20 "$SITE_URL/api/public/settings" || true)
           if [ -z "$settings" ]; then
             edge_fail="the edge did not answer $SITE_URL/api/public/settings"
-          elif ! echo "$settings" | jq -e '.data.site_name != null or .data.allow_mounted != null' >/dev/null; then
+          elif ! echo "$settings" | jq -e '.data.site_name != null or .data.site_title != null or .data.allow_mounted != null' >/dev/null; then
             edge_fail="the public settings payload at the edge is empty"
           else
             echo "edge version stamp: $(echo "$settings" | jq -r '.data.version // "none"') (recorded only — this shared row is rewritten by any service on the same database)"
