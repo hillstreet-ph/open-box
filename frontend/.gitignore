@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Build artifacts
+*.js
+*.d.ts
+*.d.ts.map
+*.js.map
+tsconfig.tsbuildinfo

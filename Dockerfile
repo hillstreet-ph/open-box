@@ -41,7 +41,7 @@ RUN addgroup -g ${GID} ${USER} && \
 COPY --from=builder --chmod=755 --chown=${UID}:${GID} /app/bin/openlist ./
 COPY --chmod=755 --chown=${UID}:${GID} entrypoint.sh /entrypoint.sh
 
-USER ${USER}
+USER root
 RUN /entrypoint.sh version
 
 ENV UMASK=022 RUN_ARIA2=${INSTALL_ARIA2}
