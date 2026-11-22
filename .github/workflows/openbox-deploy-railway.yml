@@ -99,7 +99,7 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 40
     env:
       SITE_URL: ${{ vars.SITE_URL || 'https://open-box.space' }}
