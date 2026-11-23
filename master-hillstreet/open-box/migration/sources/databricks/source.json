@@ -1,0 +1,26 @@
+{
+  "schema": "hillstreet.migration-source/v1",
+  "provider": "databricks",
+  "name": "open-box-sg-prod-migration-databricks",
+  "project": "open-box",
+  "destination_region": "ap-hongkong",
+  "source_status": "partially-verified",
+  "mode": "inventory-only",
+  "enabled": false,
+  "safety": {
+    "allow_paid_resources": false,
+    "allow_local_execution": false,
+    "allow_deletion": false,
+    "allow_cutover": false,
+    "allow_transfer": false
+  },
+  "observed": {
+    "connection": "Composio Databricks account active",
+    "warehouse_inventory": "failed-200-unparseable",
+    "workspace_region": "not-confirmed",
+    "migration_unit": "separately verified export or connector; no billable cluster starts"
+  },
+  "parent": "master-hillstreet/open-box/migration",
+  "legacy_name": "master-migration-sg-prod-databricks",
+  "target_name": "open-box-hk-prod-migration-databricks"
+}
