@@ -1,17 +1,54 @@
 # master-hillstreet
 
-Single logical parent for the HillStreet Singapore-first infrastructure.
+**Single organizational parent** for independent HillStreet projects. **New default target: Hong Kong** (`HK`; Tencent `ap-hongkong`). Existing Singapore infrastructure remains in its *actual* regions until an independently verified migration.
 
 ```text
 master-hillstreet/
-├── open-box/         # Open-Box application, metadata and storage mapping
-└── master-migration/ # Cross-provider inventory, source adapters and migration controls
+├── README.md
+├── config/
+│   └── projects.json
+├── open-box/                    # Cloud-drive router front end
+│   ├── app/                     # Railway live application reference
+│   ├── database/                # Supabase transactional metadata
+│   ├── files/                   # Railway persistent volume
+│   ├── backups/                 # Private snapshots and archival
+│   ├── ai-bucket/               # Tencent CI AiBucket reference
+│   ├── integrations/
+│   │   └── cloud-drives/        # Google Drive, OneDrive, Dropbox, WebDAV, local export adapters
+│   └── migration/               # Hong Kong target; original Singapore sources
+│       ├── config/
+│       │   ├── hongkong.json
+│       │   └── resource-registry.json
+│       ├── sources/
+│       ├── inventory/
+│       ├── docs/
+│       ├── scripts/
+│       └── tests/
+├── open-system/                 # Separate software project
+├── open-claw/                   # Separate agent runtime project
+└── open-connect/                # Separate integration gateway project
 ```
 
-The project folders describe ownership and canonical migration configuration. **They do not rename or move existing cloud resources.** Railway serves the Open-Box production application; Supabase owns PostgreSQL, and Tencent COS is an object-storage candidate. This hierarchy is versioned in the existing Open-Box repository as an organization layer, not a new paid cloud account, storage bucket or runtime.
+## Physical repository ownership
 
-Location defaults: Singapore (Tencent `ap-singapore`; Supabase `ap-southeast-1`). All new logical names follow `<project>-sg-<environment>-<component>`, preserving historical resource IDs.
+The folders in this document are a **directory and configuration index** in `hillstreet-ph/open-box`, not a forced merger of existing application code. Independent project repositories:
 
-**Canonical migration registry:** [master-migration/config/resource-registry.json](master-migration/config/resource-registry.json)
+- [open-box](https://github.com/hillstreet-ph/open-box)
+- [open-system](https://github.com/hillstreet-ph/open-system)
+- [open-claw](https://github.com/hillstreet-ph/open-claw)
+- [open-connect](https://github.com/hillstreet-ph/open-connect)
 
-**Current operating mode:** migration inventory and validation only. No live transfers, DNS changes, paid Tencent DTS execution or source deletion.
+[Project registry](config/projects.json) is the parent-level project index. Each project retains its own source code, CI and production resources. Further confirmed projects may be indexed without copying their repositories.
+
+## Naming and region policy
+
+- Proposed *new* aliases: `<project>-hk-<environment>-<component>`
+- Tencent Hong Kong destination: `ap-hongkong`
+- Supabase existing projects: Singapore `ap-southeast-1`; availability of a separate Hong Kong deployment must be verified before any database relocation
+- Existing Railway Open-Box service and Tencent Singapore buckets: retain physical IDs and original regions
+- Data in Singapore is **not** in Hong Kong just because its registry alias changes
+- Credentials, tokens, local device data and secrets do not belong in this repository
+
+## Operational limitations
+
+This is an organization-only change on [draft PR #105](https://github.com/hillstreet-ph/open-box/pull/105). Do not auto-merge or treat it as a ready production cutover. No new Hong Kong COS buckets, database replicas, Databricks compute, Railway services or automated source synchronizers are created by these files. Paid DTS execution, DNS changes, database restores and deletion stay disabled until verified separately.
