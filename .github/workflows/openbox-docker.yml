@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: self-hosted
+    # Railway self-hosted runners have no /var/run/docker.sock.
+    # GitHub-hosted Linux jobs provide the Docker daemon needed by Buildx.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
