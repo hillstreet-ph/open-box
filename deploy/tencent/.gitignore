@@ -1,0 +1,5 @@
+# Never commit Tencent runtime credentials or local deployment selections.
+runtime.env
+.env
+*.pem
+*.key
