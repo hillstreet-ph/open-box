@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     git \
+    libicu70 \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +22,5 @@ RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
     && tar xzf ./actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
 
-COPY --chown=runner:runner entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+COPY --chown=runner:runner deploy/runner/entrypoint.sh /runner-entrypoint.sh
+ENTRYPOINT ["/runner-entrypoint.sh"]
