@@ -1,0 +1,74 @@
+{
+  "schema": "hillstreet.master-migration/v1",
+  "environment": "prod",
+  "region": {
+    "tencent": "ap-singapore",
+    "supabase": "ap-southeast-1",
+    "databricks": "unverified"
+  },
+  "naming": "<project>-sg-<environment>-<purpose>",
+  "execution": {
+    "dry_run_only": true,
+    "allow_paid_resources": false,
+    "allow_local_execution": false,
+    "automatic_deletion": false,
+    "production_cutover": false,
+    "automated_data_transfer": false
+  },
+  "resources": [
+    {
+      "name": "open-box-sg-prod-app",
+      "project": "open-box",
+      "role": "railway-source-app",
+      "provider": "railway",
+      "status": "verified-source",
+      "enabled": false,
+      "reference": "b65f4f52-404d-4dcb-be94-14a76f9d55ff"
+    },
+    {
+      "name": "open-box-sg-prod-cos",
+      "project": "open-box",
+      "role": "tencent-cos-object-target",
+      "provider": "tencent-cos",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null
+    },
+    {
+      "name": "open-box-sg-prod-postgres",
+      "project": "open-box",
+      "role": "supabase-existing-metadata",
+      "provider": "supabase",
+      "status": "verified-source",
+      "enabled": false,
+      "reference": "huadtiuuoiriqrjpjxhr:open_box"
+    },
+    {
+      "name": "master-migration-sg-prod-control",
+      "project": "master-migration",
+      "role": "migration-orchestrator",
+      "provider": "not-deployed",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null
+    },
+    {
+      "name": "master-migration-sg-prod-warehouse",
+      "project": "master-migration",
+      "role": "databricks-warehouse",
+      "provider": "databricks",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null
+    },
+    {
+      "name": "master-migration-sg-prod-local-import",
+      "project": "master-migration",
+      "role": "optional-desktop-snapshot-import",
+      "provider": "desktop-export",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null
+    }
+  ]
+}
