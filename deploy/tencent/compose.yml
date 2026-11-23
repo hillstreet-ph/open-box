@@ -1,0 +1,24 @@
+# Proposed Open-Box application on an already-owned Tencent Lighthouse/CVM host.
+# Does not create a cloud server, cloud runner, public origin, or DNS record.
+# Set OPENBOX_IMAGE to an inspected immutable linux/amd64 (or host-arch) digest.
+services:
+  open-box:
+    image: ${OPENBOX_IMAGE:?Set an existing verified Open-Box image digest}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./runtime.env
+    ports:
+      # Reverse-proxy locally on the Tencent host; do not expose port 5244 publicly.
+      - "127.0.0.1:5244:5244"
+    volumes:
+      - type: bind
+        source: /srv/open-box/data
+        target: /opt/openlist/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5244/ping | grep -qx pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    stop_grace_period: 45s
