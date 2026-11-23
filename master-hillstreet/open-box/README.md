@@ -1,24 +1,32 @@
-# Open-Box — master-hillstreet
+# Open-Box — cloud-drive router
 
-**Owner:** `master-hillstreet/open-box` (Singapore default).
+**Owner:** `master-hillstreet/open-box` · **Default target region:** Hong Kong · **Current production:** existing Railway deployment.
 
-## Logical structure
+Open-Box is a web frontend and router to independent storage providers, *not* the sole place where all connected files are copied. Provider authorizations and existing account locations remain independent.
 
 ```text
 open-box/
-├── app/        # Existing Railway production service; not stored in this folder
-├── database/   # Existing Supabase open-platform.open_box tables
-├── files/      # Existing Railway persistent volume at /opt/openlist/data
-├── backups/    # Existing Supabase and private Tencent COS backup candidates
-└── ai-bucket/  # Tencent CI AiBucket; not the same as a COS bucket
+├── app/                     # Railway production Open-Box runtime
+├── database/                # Supabase open_platform / open_box metadata
+├── files/                   # Existing Railway persistent volume
+├── backups/                 # Private backup objects
+├── ai-bucket/               # Tencent AI resource, separately identified
+├── integrations/
+│   └── cloud-drives/        # Connector inventory and safety contracts
+└── migration/
+    ├── config/hongkong.json
+    ├── config/resource-registry.json
+    ├── sources/
+    ├── inventory/
+    ├── docs/
+    ├── scripts/
+    └── tests/
 ```
 
-These are **conceptual resource groups**. This README deliberately avoids creating empty, duplicate application, database or object-storage directories. The real Open-Box application code remains at the current repository root.
+Current source observations: Railway `open-box` running in Singapore, Supabase `open-platform` with `open_box` schema in Singapore, and Tencent COS backup/datalake buckets observed in Singapore. Those resources are **not** relocated by this draft. The separately created Tencent `AiBucket` is not interchangeable with COS.
 
-- Railway project: `b65f4f52-404d-4dcb-be94-14a76f9d55ff`; production remains active.
-- Supabase Open-Box schema: `open-platform.open_box`.
-- Existing Tencent private COS backup bucket: `open-box-backups-1531773422` (browser-observed, not API-tested).
-- Existing Tencent AI bucket: `open-box-1531773422` (creation response, not object-store integration proof).
-- Running application is not migrated merely because this organization folder exists.
+The [connector map](integrations/cloud-drives/README.md) distinguishes Google Drive, OneDrive, Dropbox, WebDAV and explicit macOS/Android exports. No new OAuth permissions are granted by the map.
 
-Cross-provider physical IDs, source evidence and migration safety controls: [../master-migration/config/resource-registry.json](../master-migration/config/resource-registry.json).
+[Hong Kong migration configuration](migration/config/hongkong.json) · [Resource registry](migration/config/resource-registry.json)
+
+Do not deploy a duplicate router, overwrite existing mounts or make the backup bucket public.
