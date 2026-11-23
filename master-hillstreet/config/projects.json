@@ -1,0 +1,53 @@
+{
+  "schema": "hillstreet.project-directory/v1",
+  "parent": "master-hillstreet",
+  "default_region": {
+    "country": "HK",
+    "tencent": "ap-hongkong",
+    "supabase_target": "verify-availability",
+    "databricks_target": "verify-region",
+    "existing_resource_regions": "preserve-current"
+  },
+  "logical_naming": "<project>-hk-<environment>-<component>",
+  "status": "directory-only; not physical migrations or repository consolidation",
+  "projects": [
+    {
+      "key": "open-box",
+      "repository": "hillstreet-ph/open-box",
+      "path": "master-hillstreet/open-box/",
+      "role": "cloud-drive router frontend with Railway app, Supabase data, provider connectors and nested migration",
+      "migration_path": "master-hillstreet/open-box/migration/",
+      "source_region": "Singapore for verified current services",
+      "target_default": "Hong Kong"
+    },
+    {
+      "key": "open-system",
+      "repository": "hillstreet-ph/open-system",
+      "path": "master-hillstreet/open-system/",
+      "role": "independent application and service project",
+      "target_default": "Hong Kong"
+    },
+    {
+      "key": "open-claw",
+      "repository": "hillstreet-ph/open-claw",
+      "path": "master-hillstreet/open-claw/",
+      "role": "independent agent runtime project",
+      "target_default": "Hong Kong"
+    },
+    {
+      "key": "open-connect",
+      "repository": "hillstreet-ph/open-connect",
+      "path": "master-hillstreet/open-connect/",
+      "role": "independent integration gateway project",
+      "target_default": "Hong Kong"
+    }
+  ],
+  "rules": [
+    "One metadata parent; application code remains in its independent repositories",
+    "Never move physical Singapore resources by renaming their registry labels",
+    "No credentials or OAuth tokens in source control",
+    "Avoid duplicate deployments, databases, storage buckets and overlapping schedulers",
+    "Default Hong Kong is target policy, not existing runtime location",
+    "Cloud router mounts need per-provider authorization; not silently enabled"
+  ]
+}
