@@ -1,0 +1,123 @@
+{
+  "schema": "hillstreet.migration-inventory/v1",
+  "observed_at": "2026-11-23",
+  "observation": "read-only Supabase Postgres storage.buckets and storage.objects counts",
+  "destination_region_policy": "singapore",
+  "source_projects": [
+    {
+      "project_name": "open-platform",
+      "project_ref": "huadtiuuoiriqrjpjxhr",
+      "region": "ap-southeast-1",
+      "storage_buckets": [
+        {
+          "name": "agent-artifacts",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "automation-files",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "knowledge",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "memory-knowledge-files",
+          "public": false,
+          "object_count": 2
+        },
+        {
+          "name": "model-files",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "open-box-backups",
+          "public": false,
+          "object_count": 2
+        },
+        {
+          "name": "open-box-files",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "open-system-backups",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "project-artifacts",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "resource-packages",
+          "public": false,
+          "object_count": 67
+        },
+        {
+          "name": "temporary-uploads",
+          "public": false,
+          "object_count": 0
+        }
+      ]
+    },
+    {
+      "project_name": "open-operations",
+      "project_ref": "hoseohvgoiarxluxqwqv",
+      "region": "ap-southeast-1",
+      "storage_buckets": [
+        {
+          "name": "campaign-assets",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "invoice-documents-private",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "kobeplay-documents",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "payment-evidence-private",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "staff-assets",
+          "public": false,
+          "object_count": 0
+        },
+        {
+          "name": "telegram-media",
+          "public": false,
+          "object_count": 0
+        }
+      ]
+    }
+  ],
+  "transferable": false,
+  "constraints": [
+    "No credentials or object paths in this inventory",
+    "Private buckets stay private",
+    "Object counts are not backup integrity proof",
+    "Do not infer storage byte sizes from object counts",
+    "Tencent COS bucket remains unverified",
+    "No source deletion or write operations"
+  ],
+  "target": {
+    "provider": "tencent-cos",
+    "region": "ap-singapore",
+    "bucket_name": null,
+    "connection_verified": false,
+    "quota_verified": false
+  }
+}
