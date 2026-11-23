@@ -1,0 +1,211 @@
+{
+  "schema": "hillstreet.resource-registry/v1",
+  "version": "2.0.0",
+  "region_policy": {
+    "default_country": "HK",
+    "target_tencent": "ap-hongkong",
+    "target_supabase": "availability-unverified",
+    "target_databricks": "availability-unverified",
+    "source_locations": {
+      "supabase": "ap-southeast-1",
+      "railway": "asia-southeast1-eqsg3a",
+      "tencent_cos": "ap-singapore"
+    }
+  },
+  "naming": "<project>-hk-<env>-<component>",
+  "scope": "Centralized aliases and observed physical locations; never relabel Singapore source resources as Hong Kong assets",
+  "projects": [
+    {
+      "id": "open-box",
+      "description": "Public website application, file service and private backups",
+      "resources": [
+        {
+          "logical_name": "open-box-sg-prod-app",
+          "provider": "railway",
+          "resource_type": "application",
+          "physical_name": "open-box",
+          "physical_id": "3c9c8d2b-6677-4261-88be-11e0c4c9be2a",
+          "parent_id": "b65f4f52-404d-4dcb-be94-14a76f9d55ff",
+          "region": "asia-southeast1-eqsg3a",
+          "state": "verified-running",
+          "purpose": "live application",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-app"
+        },
+        {
+          "logical_name": "open-box-sg-prod-volume",
+          "provider": "railway",
+          "resource_type": "persistent-volume",
+          "physical_name": "open-box-volume",
+          "mount": "/opt/openlist/data",
+          "allocated_mb": 50000,
+          "used_bytes": null,
+          "state": "verified-allocation-only",
+          "purpose": "current file data; backup before migration",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-volume"
+        },
+        {
+          "logical_name": "open-box-sg-prod-postgres",
+          "provider": "supabase",
+          "resource_type": "postgres-schema",
+          "physical_name": "open_box",
+          "parent_id": "huadtiuuoiriqrjpjxhr",
+          "region": "ap-southeast-1",
+          "table_count": 15,
+          "state": "verified-metadata-only",
+          "purpose": "application tables",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-postgres"
+        },
+        {
+          "logical_name": "open-box-sg-prod-storage-backups",
+          "provider": "supabase",
+          "resource_type": "storage-bucket",
+          "physical_name": "open-box-backups",
+          "parent_id": "huadtiuuoiriqrjpjxhr",
+          "region": "ap-southeast-1",
+          "object_count_observed": 2,
+          "private": true,
+          "state": "verified-metadata-only",
+          "purpose": "existing backup objects",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-storage-backups"
+        },
+        {
+          "logical_name": "open-box-sg-prod-cos-backups",
+          "provider": "tencent-cos",
+          "resource_type": "object-bucket",
+          "physical_name": "open-box-backups-1531773422",
+          "region": "ap-singapore",
+          "state": "console-observed",
+          "purpose": "candidate private offsite backup destination",
+          "access": "private read-write in console",
+          "website": "off",
+          "change_policy": "retain-and-verify",
+          "target_alias": "open-box-hk-prod-cos-backups"
+        },
+        {
+          "logical_name": "open-box-sg-prod-ai-bucket",
+          "provider": "tencent-ci",
+          "resource_type": "ai-bucket",
+          "physical_name": "open-box-1531773422",
+          "region": "ap-singapore",
+          "state": "creation-response-http-200",
+          "purpose": "Tencent AI bucket; underlying COS linkage unverified",
+          "change_policy": "retain-and-verify",
+          "target_alias": "open-box-hk-prod-ai-bucket"
+        }
+      ]
+    },
+    {
+      "id": "open-box-migration",
+      "description": "Nested Open-Box migration controller metadata; no deployed controller",
+      "resources": [
+        {
+          "logical_name": "master-migration-sg-prod-control",
+          "provider": "github",
+          "resource_type": "staged-configuration",
+          "physical_name": "master-migration/",
+          "parent_id": "hillstreet-ph/open-box",
+          "state": "draft-pr-only",
+          "purpose": "source contracts, policies, tests; no controller deployed",
+          "change_policy": "review",
+          "target_alias": "open-box-hk-prod-migration-github"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-cos-datalake",
+          "provider": "tencent-cos",
+          "resource_type": "object-bucket",
+          "physical_name": "open-box-tokenhub-datalake-1531773422",
+          "region": "ap-singapore",
+          "state": "console-observed",
+          "purpose": "candidate shared data lake; named under Open-Box, not to rename until ownership mapped",
+          "change_policy": "retain-and-verify",
+          "target_alias": "open-box-hk-prod-migration-tencent-cos"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-dts",
+          "provider": "tencent-dts",
+          "resource_type": "migration-job",
+          "physical_name": "master-migration",
+          "physical_id": "dts-g24p3lhq",
+          "region": "ap-singapore",
+          "state": "creation-completed-not-migrated",
+          "billing": "pay-as-you-go",
+          "purpose": "PostgreSQL to PostgreSQL job candidate",
+          "change_policy": "do-not-start",
+          "target_alias": "open-box-hk-prod-migration-dts"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-supabase-platform",
+          "provider": "supabase",
+          "resource_type": "postgres-project",
+          "physical_name": "open-platform",
+          "physical_id": "huadtiuuoiriqrjpjxhr",
+          "region": "ap-southeast-1",
+          "state": "verified-healthy",
+          "purpose": "existing transactional database",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-migration-supabase"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-supabase-operations",
+          "provider": "supabase",
+          "resource_type": "postgres-project",
+          "physical_name": "open-operations",
+          "physical_id": "hoseohvgoiarxluxqwqv",
+          "region": "ap-southeast-1",
+          "state": "verified-healthy",
+          "purpose": "independent operations database",
+          "change_policy": "retain",
+          "target_alias": "open-box-hk-prod-migration-supabase"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-databricks",
+          "provider": "databricks",
+          "resource_type": "workspace-and-warehouse",
+          "physical_name": null,
+          "region": null,
+          "state": "connector-active-inventory-error",
+          "purpose": "optional analytics; compute unverified",
+          "change_policy": "do-not-provision",
+          "target_alias": "open-box-hk-prod-migration-databricks"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-macos",
+          "provider": "user-export",
+          "resource_type": "snapshot-source",
+          "physical_name": null,
+          "region": "source-device-unverified",
+          "state": "not-onboarded",
+          "purpose": "only explicit file exports",
+          "change_policy": "no-device-scanning",
+          "target_alias": "open-box-hk-prod-migration-user-export"
+        },
+        {
+          "logical_name": "master-migration-sg-prod-android",
+          "provider": "user-export",
+          "resource_type": "snapshot-source",
+          "physical_name": null,
+          "region": "source-device-unverified",
+          "state": "not-onboarded",
+          "purpose": "only explicit file exports",
+          "change_policy": "no-device-scanning",
+          "target_alias": "open-box-hk-prod-migration-user-export"
+        }
+      ]
+    }
+  ],
+  "safety": {
+    "contains_secrets": false,
+    "renames_applied": false,
+    "resource_creation": false,
+    "production_changes": false,
+    "transfers_enabled": false,
+    "dts_enabled": false,
+    "physical_region_changes": false
+  },
+  "parent": "master-hillstreet",
+  "migration_scope": "master-hillstreet/open-box/migration"
+}
