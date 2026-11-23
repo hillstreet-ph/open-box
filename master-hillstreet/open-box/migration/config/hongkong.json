@@ -1,0 +1,94 @@
+{
+  "schema": "hillstreet.master-migration/v1",
+  "environment": "prod",
+  "region": {
+    "target_country": "HK",
+    "tencent": "ap-hongkong",
+    "supabase_target": "unverified",
+    "databricks_target": "unverified",
+    "existing_sources": {
+      "supabase": "ap-southeast-1",
+      "railway": "asia-southeast1-eqsg3a",
+      "tencent_cos": "ap-singapore"
+    }
+  },
+  "naming": "<project>-hk-<environment>-<purpose>",
+  "execution": {
+    "dry_run_only": true,
+    "allow_paid_resources": false,
+    "allow_local_execution": false,
+    "automatic_deletion": false,
+    "production_cutover": false,
+    "automated_data_transfer": false
+  },
+  "resources": [
+    {
+      "name": "open-box-hk-prod-app",
+      "project": "open-box",
+      "role": "railway-source-app",
+      "provider": "railway",
+      "status": "verified-source",
+      "enabled": false,
+      "reference": "b65f4f52-404d-4dcb-be94-14a76f9d55ff",
+      "source_alias": "open-box-sg-prod-app",
+      "target_status": "unverified"
+    },
+    {
+      "name": "open-box-hk-prod-cos",
+      "project": "open-box",
+      "role": "tencent-cos-object-target",
+      "provider": "tencent-cos",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null,
+      "source_alias": "open-box-sg-prod-cos",
+      "target_status": "unverified"
+    },
+    {
+      "name": "open-box-hk-prod-postgres",
+      "project": "open-box",
+      "role": "supabase-existing-metadata",
+      "provider": "supabase",
+      "status": "verified-source",
+      "enabled": false,
+      "reference": "huadtiuuoiriqrjpjxhr:open_box",
+      "source_alias": "open-box-sg-prod-postgres",
+      "target_status": "unverified"
+    },
+    {
+      "name": "open-box-hk-prod-migration-control",
+      "project": "open-box",
+      "role": "migration-orchestrator",
+      "provider": "not-deployed",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null,
+      "source_alias": "master-migration-sg-prod-control",
+      "target_status": "unverified"
+    },
+    {
+      "name": "open-box-hk-prod-migration-warehouse",
+      "project": "open-box",
+      "role": "databricks-warehouse",
+      "provider": "databricks",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null,
+      "source_alias": "master-migration-sg-prod-warehouse",
+      "target_status": "unverified"
+    },
+    {
+      "name": "open-box-hk-prod-migration-local-import",
+      "project": "open-box",
+      "role": "optional-desktop-snapshot-import",
+      "provider": "desktop-export",
+      "status": "unverified",
+      "enabled": false,
+      "reference": null,
+      "source_alias": "master-migration-sg-prod-local-import",
+      "target_status": "unverified"
+    }
+  ],
+  "parent": "master-hillstreet",
+  "migration_owner": "master-hillstreet/open-box/migration"
+}
