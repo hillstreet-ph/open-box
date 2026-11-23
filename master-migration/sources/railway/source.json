@@ -1,0 +1,25 @@
+{
+  "schema": "hillstreet.migration-source/v1",
+  "provider": "railway",
+  "name": "open-box-sg-prod-railway",
+  "project": "open-box",
+  "destination_region": "ap-singapore",
+  "source_status": "verified-inventory",
+  "mode": "inventory-only",
+  "enabled": false,
+  "safety": {
+    "allow_paid_resources": false,
+    "allow_local_execution": false,
+    "allow_deletion": false,
+    "allow_cutover": false,
+    "allow_transfer": false
+  },
+  "observed": {
+    "railway_project_id": "b65f4f52-404d-4dcb-be94-14a76f9d55ff",
+    "service_id": "3c9c8d2b-6677-4261-88be-11e0c4c9be2a",
+    "persistent_path": "/opt/openlist/data",
+    "volume_allocated_mb": 50000,
+    "volume_used_mb": "unknown",
+    "migration_unit": "filesystem snapshot; external relational database remains independent"
+  }
+}
